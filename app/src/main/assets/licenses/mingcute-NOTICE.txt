@@ -1,0 +1,16 @@
+MingCute Icon
+=============
+
+本应用的线性图标取自 MingCute Icon 图标集。
+    https://www.mingcute.com/
+    授权: Apache License, Version 2.0（见同目录 mingcute-LICENSE.txt）
+    来源包: npm mingcute_icon@2.9.72
+
+改动说明（Apache-2.0 第 4 条要求声明改动）:
+    1. 只取了本应用用到的一个子集, 不是整套；
+    2. 由 scripts/make_mingcute_drawables.py 从原始 SVG 转成 Android VectorDrawable,
+       转换时**去掉了原始文件里那个不渲染的水印 path**, 并把填充色统一成不透明黑,
+       以便由调用方按主题着色；
+    3. 未改动图形的几何数据。
+
+生成的文件位于 android/app/src/main/res/drawable/ic_mc_*.xml, 每个文件头都带这条署名。

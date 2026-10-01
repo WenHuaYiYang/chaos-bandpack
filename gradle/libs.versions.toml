@@ -1,0 +1,39 @@
+[versions]
+agp = "9.4.1"
+kotlin = "2.4.20"
+composeBom = "2026.09.00"
+# material3 单独钉版本: 稳定版 1.4.0 把 Expressive 入口(MaterialExpressiveTheme /
+# MaterialTheme.motionScheme / 新组件)标成了 internal, 只有 alpha 轨公开。
+material3Version = "1.5.0-alpha29"
+activityCompose = "1.13.0"
+coroutines = "1.11.0"
+serializationJson = "1.11.0"
+androidxCore = "1.17.0"
+documentfile = "1.1.0"
+junit = "4.13.2"
+
+[libraries]
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-foundation = { module = "androidx.compose.foundation:foundation" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-util = { module = "androidx.compose.ui:ui-util" }
+compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
+compose-animation = { module = "androidx.compose.animation:animation" }
+material3 = { module = "androidx.compose.material3:material3", version.ref = "material3Version" }
+material3-window-size = { module = "androidx.compose.material3:material3-window-size-class", version.ref = "material3Version" }
+icons-core = { module = "androidx.compose.material:material-icons-core" }
+# 完整 Material 图标集(FormatSize / GridView / Download 等语义图标只有这里有)。
+# 版本由 Compose BOM 管; 只引用少量图标, 体积代价可接受。
+icons-extended = { module = "androidx.compose.material:material-icons-extended" }
+mcu = { module = "com.materialkolor:material-color-utilities-android", version = "5.0.1" }
+
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

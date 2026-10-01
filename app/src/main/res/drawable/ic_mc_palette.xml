@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MingCute (https://www.mingcute.com/) Apache License 2.0；
+     由 scripts/make_mingcute_drawables.py 从 mingcute_icon@2.9.72 生成, 勿手改 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="nonZero"
+        android:pathData="M10 3a2 2 0 0 1 2 2v.636L13.636 4a2 2 0 0 1 2.828 0L20 7.536a2 2 0 0 1 0 2.828L18.364 12H19a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2H5v14h5zm9 9h-2.636L12 18.364V19h7zM7.5 15a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m7.55-9.586L12 8.464v7.071l6.586-6.585z" />
+</vector>

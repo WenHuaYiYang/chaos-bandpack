@@ -1,0 +1,11 @@
+# 构建产物与机器相关的配置不进仓库
+build/
+.gradle/
+.kotlin/
+local.properties
+*.apk
+*.aab
+captures/
+# 自签发布密钥与口令(丢了下次就没法覆盖安装; 但绝不能进仓库)
+keystore/
+keystore.properties

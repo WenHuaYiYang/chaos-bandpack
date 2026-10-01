@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动图标底色: 与 chaos.png 的底色一致(纯白), 前景层就是那张图本身 -->
+    <color name="ic_launcher_background">#FFFFFFFF</color>
+    <!-- 品牌种子色: 取自 chaos.png 的主蓝与点缀黄 -->
+    <color name="brand_blue">#FF2A82E4</color>
+    <color name="brand_yellow">#FFFFC300</color>
+</resources>
