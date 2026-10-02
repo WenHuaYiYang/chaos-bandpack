@@ -72,9 +72,14 @@ object PreviewFactory {
         val img = draw(assets, title, status, buttons)
         val (indices, palette) = quantize(img)
         val blob = encode(indices, palette)
-        // roundtrip 自校验: 解码器镜像固件逻辑, 索引必须逐像素还原
-        val (_, _, px) = decodeBlock(blob)
-        require(px.contentEquals(indices)) { "预览块 roundtrip 失败" }
+        // roundtrip 自校验: 解码器镜像固件逻辑, 必须逐字节还原。
+        // 解压出来是 **1024 调色板 + 索引区** 两段, 要跟 indices 比的是**后面那段索引**;
+        // 早先拿整段跟纯索引比, 长度恒不相等 => require 恒失败 => 打包从没成功过一次,
+        // 界面上表现就是导出按钮永远是灰的。
+        val (w, h, raw) = decodeBlock(blob)
+        require(w == W && h == H) { "预览块尺寸不符: ${w}x$h" }
+        require(raw.size == 1024 + W * H) { "预览块解压长度不符: ${raw.size}" }
+        require(raw.copyOfRange(1024, raw.size).contentEquals(indices)) { "预览块索引 roundtrip 失败" }
         return blob
     }
 

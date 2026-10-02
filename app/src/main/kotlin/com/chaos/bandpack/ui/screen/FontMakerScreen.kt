@@ -63,6 +63,8 @@ import com.chaos.bandpack.data.font.FontSubset
 import com.chaos.bandpack.data.make.FontMake
 import com.chaos.bandpack.data.make.PackMake
 import com.chaos.bandpack.data.pack.FontPackBuilder
+import com.chaos.bandpack.data.pack.ShellBuilder
+import com.chaos.bandpack.data.pack.truncateBytes
 import com.chaos.bandpack.data.pack.TitleText
 import com.chaos.bandpack.ui.LocalWidthClass
 import com.chaos.bandpack.ui.component.BandScreenContent
@@ -191,13 +193,23 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
     val exporter = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
-        val data = toSave
-        if (uri == null || data == null) return@rememberLauncherForActivityResult
+        // 字节先问中转站要: 去开系统保存界面那一段 Activity 允许被重建(转屏/内存回收),
+        // 放在 state 里的字节会随重建一起丢, 那时这里静默 return —— 用户看到的就是
+        // "选完文件啥也没发生"。取不到就明确报出来, 不许什么都不说。
+        val pend = ExportPending.take()
+        // SAF 回的 URI 里读不到可读的名字(lastPathSegment 往往是媒体库行号),
+        // 所以用我们自己拼的那一个; 兜底再退账到 URI。
+        val suggested = pend?.name ?: "chaos-fontpack-$label.bin"
+        val data = pend?.bytes ?: toSave
+        if (uri == null || data == null) {
+            scope.launch { snackbar.showSnackbar("没有待写的包，请回到这一页再点一次导出") }
+            return@rememberLauncherForActivityResult
+        }
         scope.launch {
             val r = withContext(Dispatchers.IO) {
                 runCatching { ctx.contentResolver.openOutputStream(uri)!!.use { it.write(data) } }
             }
-            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "已保存"
+            val name = suggested
             r.fold(
                 onSuccess = {
                     savedAs = name
@@ -313,8 +325,8 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                                 Column(Modifier.weight(1f)) {
                                     SectionHeader("参数", chaosIcon(ChaosIcon.SectionParams))
                                     OptionsBlock(
-                                        label, { v -> label = v.take(16); syncDefaults(label) },
-                                        packName, { nameTouched = true; packName = it.take(32) },
+                                        label, { v -> label = v.truncateBytes(FontPackBuilder.LABEL_BYTES); syncDefaults(label) },
+                                        packName, { nameTouched = true; packName = it.truncateBytes(ShellBuilder.NAME_MAX - 1) },
                                         title, { titleTouched = true; title = it.take(24) },
                                         titleWarn, pkgId,
                                         { pkgId = it.filter { c -> c.isDigit() }.take(12) },
@@ -329,8 +341,8 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                         } else {
                             SectionHeader("参数", chaosIcon(ChaosIcon.SectionParams))
                             OptionsBlock(
-                                label, { v -> label = v.take(16); syncDefaults(label) },
-                                packName, { nameTouched = true; packName = it.take(32) },
+                                label, { v -> label = v.truncateBytes(FontPackBuilder.LABEL_BYTES); syncDefaults(label) },
+                                packName, { nameTouched = true; packName = it.truncateBytes(ShellBuilder.NAME_MAX - 1) },
                                 title, { titleTouched = true; title = it.take(24) },
                                 titleWarn, pkgId,
                                 { pkgId = it.filter { c -> c.isDigit() }.take(12) },
@@ -354,17 +366,58 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                     busy = busy,
                     label = if (p == null) "导出 .bin"
                     else "导出 · %.2f MB".format(p.bytes.size / 1048576.0),
+                    hint = exportBlockReason(srcBytes, made, busy, label, packName, title, pkgId, err, p),
                     // 尾随 lambda 会绑到最后那个参数(这里是 modifier), 所以 onClick 必须显式写
                     onClick = {
                         val r = p ?: return@ExportPill
+                        ExportPending.put(r.bytes, "chaos-fontpack-$label.bin")
                         toSave = r.bytes
                         savedAs = null
-                        exporter.launch("chaos-fontpack-$label.bin")
+                        // 系统没有一个 app 接这个 intent 时 launch 会直接抛,
+                        // 在点击回调里抛就是闪退 —— 包住并给出可读的一条。
+                        runCatching { exporter.launch("chaos-fontpack-$label.bin") }
+                            .onFailure {
+                                scope.launch { snackbar.showSnackbar("打不开保存界面：${it.message}") }
+                            }
                     },
                 )
                 Spacer(Modifier.height(Spacing.xxl))
             }
         }
+    }
+}
+
+/**
+ * 导出按钮现在为什么点不了 —— 逐条翻译成人话。
+ *
+ * 这些分支过去一律只是把包置空, 界面上三个不同的原因长得一模一样(一圈灰描边),
+ * 用户只能对着按钮反复点; 打包失败那条虽然有 [HintBar], 但它在半页之外的预览卡里。
+ */
+private fun exportBlockReason(
+    srcBytes: ByteArray?,
+    made: FontMake.Made?,
+    busy: Boolean,
+    label: String,
+    packName: String,
+    title: String,
+    pkgId: String,
+    err: String?,
+    pack: FontPackBuilder.Result?,
+): String? {
+    val labelBytes = label.toByteArray(Charsets.UTF_8).size
+    return when {
+        srcBytes == null -> "先选一份字体文件"
+        busy -> null
+        made == null -> err?.let { "字体没处理出来：$it" } ?: "正在处理字体…"
+        label.isBlank() -> "短名是空的"
+        packName.isBlank() -> "表盘名称是空的"
+        title.isBlank() -> "标题文字是空的"
+        labelBytes > FontPackBuilder.LABEL_BYTES ->
+            "短名 $labelBytes 字节，上限 ${FontPackBuilder.LABEL_BYTES}（中文最多 4 个字）"
+        pkgId.isNotBlank() && pkgId.length != 12 ->
+            "表盘 ID 要 12 位数字，现在是 ${pkgId.length} 位"
+        pack == null -> err?.let { "打包失败：$it" } ?: "包还没准备好"
+        else -> null
     }
 }
 

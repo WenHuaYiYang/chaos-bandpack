@@ -71,6 +71,8 @@ import com.chaos.bandpack.data.make.IconMake
 import com.chaos.bandpack.data.make.PackMake
 import com.chaos.bandpack.data.pack.Cipk
 import com.chaos.bandpack.data.pack.IconPackBuilder
+import com.chaos.bandpack.data.pack.ShellBuilder
+import com.chaos.bandpack.data.pack.truncateBytes
 import com.chaos.bandpack.data.pack.TitleText
 import com.chaos.bandpack.ui.LocalWidthClass
 import com.chaos.bandpack.ui.component.ExportPill
@@ -214,15 +216,22 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     val exporter = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
-        val data = toSave
-        if (uri == null || data == null) return@rememberLauncherForActivityResult
+        // 同字体页: 字节挂在中转站上, 去开系统保存界面那一段 Activity 允许被重建。
+        // 取不到就明说, 不许静默 return —— 那种失败在界面上表现为"点了导出没反应"。
+        val pend = ExportPending.take()
+        val suggested = pend?.name ?: "chaos-iconpack-$short.bin"
+        val data = pend?.bytes ?: toSave
+        if (uri == null || data == null) {
+            tell("没有待写的包，请回到这一页再点一次导出")
+            return@rememberLauncherForActivityResult
+        }
         scope.launch {
             val r = withContext(Dispatchers.IO) {
                 runCatching { ctx.contentResolver.openOutputStream(uri)!!.use { it.write(data) } }
             }
             r.fold(
                 onSuccess = {
-                    savedAs = uri.lastPathSegment?.substringAfterLast('/') ?: "已保存"
+                    savedAs = suggested
                     tell("已保存 ${savedAs}")
                 },
                 onFailure = { tell("写入失败：${it.message}") },
@@ -381,6 +390,14 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                         LegendSwatch("已换") { LegendBox(lerp(tone.field, tone.deep, 0.18f)) }
                         LegendSwatch("原图") { LegendBox(lerp(tone.field, s.surface, 0.5f)) }
                     }
+                    // 空槽里那张图不是本应用画的: 它是手环原本的图标, 从固件资源包里解出来的。
+                    // 出处写在图例下面一句话说清, 免得被当成自有素材(授权限制见开源许可页)。
+                    Text(
+                        "「原图」是手环原本的图标，取自小米固件的资源包，只作本地对照。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tone.muted,
+                        modifier = Modifier.padding(top = Spacing.s),
+                    )
                 }
             }
 
@@ -410,7 +427,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                             if (!nameTouched) packName = "图标:$short"
                             if (!titleTouched) title = "图标投递 $short"
                         },
-                        packName, { nameTouched = true; packName = it.take(32) },
+                        packName, { nameTouched = true; packName = it.truncateBytes(ShellBuilder.NAME_MAX - 1) },
                         title, { titleTouched = true; title = it.take(24) },
                         pkgId, { v -> pkgId = v.filter { it.isDigit() }.take(12) },
                     )
@@ -459,12 +476,15 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                         busy = busy,
                         label = if (pp == null) "导出 .bin"
                         else "导出 · ${pp.iconCount} 张",
+                        hint = exportBlockReason(picked, busy, short, packName, title, pkgId, pp),
                         // 尾随 lambda 会绑到最后那个参数(这里是 modifier), onClick 必须显式写
                         onClick = {
                             val r = pp ?: return@ExportPill
+                            ExportPending.put(r.bytes, "chaos-iconpack-$short.bin")
                             toSave = r.bytes
                             savedAs = null
-                            exporter.launch("chaos-iconpack-$short.bin")
+                            runCatching { exporter.launch("chaos-iconpack-$short.bin") }
+                                .onFailure { tell("打不开保存界面：${it.message}") }
                         },
                     )
                     Spacer(Modifier.height(Spacing.xxxl))
@@ -693,4 +713,34 @@ internal fun stemForFileName(fileName: String): String? {
     return IconSpec.SLOTS.firstOrNull {
         it.stem.equals(base, ignoreCase = true) || it.label == base
     }?.stem
+}
+
+/**
+ * 导出按钮现在为什么点不了。与字体页同一套写法: 过去这些分支一律只把包置空,
+ * 界面上什么都不说, 用户只能对着一圈灰描边反复点。
+ */
+private fun exportBlockReason(
+    picked: Map<String, ByteArray>,
+    busy: Boolean,
+    short: String,
+    packName: String,
+    title: String,
+    pkgId: String,
+    pack: IconPackBuilder.Result?,
+): String? {
+    val shortBytes = short.toByteArray(Charsets.US_ASCII).size
+    return when {
+        picked.isEmpty() -> "至少往一个槽位里放一张图标"
+        busy -> null
+        short.isBlank() -> "包短名是空的"
+        shortBytes > IconPackBuilder.SHORT_BYTES ->
+            "包短名 $shortBytes 字节，上限 ${IconPackBuilder.SHORT_BYTES}"
+        short.any { it.code <= 0x20 || it.code >= 0x7F } -> "包短名只能用可打印 ASCII，不支持中文"
+        packName.isBlank() -> "表盘名称是空的"
+        title.isBlank() -> "标题文字是空的"
+        pkgId.isNotBlank() && pkgId.length != 12 ->
+            "表盘 ID 要 12 位数字，现在是 ${pkgId.length} 位"
+        pack == null -> "包还没准备好（打包失败会在顶部提示）"
+        else -> null
+    }
 }

@@ -37,8 +37,16 @@ fun deviceSource(vararg rel: String): File? {
         .firstOrNull { it.isFile }
 }
 
-/** 系统原图标(逆向固件资源包得来)没有可再分发授权, 所以默认不同步 */
-val stockIconsEnabled = (findProperty("chaos.stockIcons") as String?)?.toBoolean() ?: false
+/**
+ * 系统原图标: 从固件资源包解出来那批图(手环桌面上那些应用原本长什么样),
+ * 图标页的空槽位与首页的预览都指望它 —— 默认带上。
+ *
+ * 素材**不进本仓库**: 构建时从设备侧仓库的 `sys_icons/stock` 同步进来, 也就是说只有
+ * 手上有固件资源、自己解过的人打出来的包才有这批图。没有那份素材的构建(公开仓库 / CI)
+ * 这里必然是空目录, 界面自动退成"未内置" —— 这批图不会由本仓库再分发出去, 只作本地对照。
+ * 想显式排除时用 `-Pchaos.stockIcons=false`。来源与授权限制见 `THIRD_PARTY_NOTICES.md`。
+ */
+val stockIconsEnabled = (findProperty("chaos.stockIcons") as String?)?.toBoolean() ?: true
 
 // 自签发布密钥: 口令与 jks 都不进仓库(见 android/.gitignore)。
 // 文件不在时 release 退成"未签名", 这样换机器/CI 仍能构建, 只是产物要自己签。
@@ -110,6 +118,7 @@ val syncLegalAssets by tasks.registering(Sync::class) {
     group = "chaos"
     description = "把许可与第三方声明同步进 assets/legal"
     from(rootProject.file("THIRD_PARTY_NOTICES.md"))
+    from(rootProject.file("PRIVACY_POLICY.md")) { rename { "privacy_policy.md" } }
     from(rootProject.file("third_party")) { into("third_party") }
     into(layout.buildDirectory.dir("legal-assets/legal"))
 }

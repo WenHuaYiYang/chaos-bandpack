@@ -151,6 +151,8 @@ fun ExportPill(
     enabled: Boolean,
     label: String,
     busy: Boolean = false,
+    /** 不可点时的原因, 写在按钮正下方; 可点时传 null */
+    hint: String? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -165,45 +167,68 @@ fun ExportPill(
         animationSpec = MaterialTheme.motionScheme.fastSpatialSpec(),
         label = "pillPress",
     )
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(CircleShape)
-            // 禁用态**不填色**, 只留一圈极淡的描边: 填了色它就是全屏最重的一块,
-            // 偏偏它还是不可用的 —— 分量与可用性反了。空状态里那个实色按钮才是主次。
-            .background(if (live) tone.deep else Color.Transparent)
-            .border(
-                width = if (live) 0.dp else 1.dp,
-                color = if (live) Color.Transparent else lerp(tone.field, tone.muted, 0.35f),
-                shape = CircleShape,
-            )
-            .then(
-                if (live) {
-                    Modifier.clickable(interactionSource = interaction) {
-                        haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
-                        onClick()
-                    }
-                } else {
-                    // semantics 里 disabled 是个函数不是属性: 只在禁用时挂
-                    Modifier.semantics { disabled() }
-                },
-            )
-            .padding(horizontal = Spacing.xl, vertical = Spacing.l),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.s, Alignment.CenterHorizontally),
-    ) {
-        // 前景色只在这一处声明, 图标/加载指示/文字全从 LocalContentColor 取。
-        // 之前只给文字写了色、图标没跟着, 在实色底上就是一枚黑图标(实测)。
-        val fg = if (live) tone.onDeep else tone.muted
-        CompositionLocalProvider(LocalContentColor provides fg) {
-            if (busy) LoadingIndicator(modifier = Modifier.size(20.dp))
-            else Icon(chaosIcon(ChaosIcon.Save), contentDescription = null)
-            Text(
-                label,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .clip(CircleShape)
+                // 禁用态**不填色**, 只留一圈极淡的描边: 填了色它就是全屏最重的一块,
+                // 偏偏它还是不可用的 —— 分量与可用性反了。空状态里那个实色按钮才是主次。
+                .background(if (live) tone.deep else Color.Transparent)
+                .border(
+                    width = if (live) 0.dp else 1.dp,
+                    color = if (live) Color.Transparent else lerp(tone.field, tone.muted, 0.35f),
+                    shape = CircleShape,
+                )
+                .then(
+                    if (live) {
+                        Modifier.clickable(interactionSource = interaction) {
+                            haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+                            onClick()
+                        }
+                    } else {
+                        // semantics 里 disabled 是个函数不是属性: 只在禁用时挂
+                        Modifier.semantics { disabled() }
+                    },
+                )
+                .padding(horizontal = Spacing.xl, vertical = Spacing.l),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.s, Alignment.CenterHorizontally),
+        ) {
+            // 前景色只在这一处声明, 图标/加载指示/文字全从 LocalContentColor 取。
+            // 之前只给文字写了色、图标没跟着, 在实色底上就是一枚黑图标(实测)。
+            val fg = if (live) tone.onDeep else tone.muted
+            CompositionLocalProvider(LocalContentColor provides fg) {
+                if (busy) LoadingIndicator(modifier = Modifier.size(20.dp))
+                else Icon(chaosIcon(ChaosIcon.Save), contentDescription = null)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        // 为什么点不了: 一圈灰描边只说明"不可用", 说不出缺哪一项。以前这里什么都不写,
+        // 缺字段 / 短名超长 / 打包失败三种情况长得一模一样 —— 用户看到的就是"点了没反应"。
+        if (hint != null) {
+            Row(
+                modifier = Modifier.padding(horizontal = Spacing.m),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
+                Icon(
+                    chaosIcon(ChaosIcon.Warning),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }

@@ -38,12 +38,15 @@ object UiPrefs {
     private val styleState = mutableStateOf(ThemeStyle.PAPER)
     // 底栏文字: 默认关(底栏只有图标, 参照用户给的深墨胶囊图), 要看名字再打开
     private val navLabelsState = mutableStateOf(false)
+    // 隐私政策同意记录: 首启必须先过同意页, 键名带版本, 政策大改时升版本重新征求
+    private val privacyAgreedState = mutableStateOf(false)
 
     /** 读它要在 Composable 里读: getter 取的是 MutableState 的值, 所以会自动跟着刷新 */
     val appearance: Appearance get() = appearanceState.value
     val dynamicColor: Boolean get() = dynamicState.value
     val themeStyle: ThemeStyle get() = styleState.value
     val navLabels: Boolean get() = navLabelsState.value
+    val privacyAgreed: Boolean get() = privacyAgreedState.value
 
     fun init(ctx: Context) {
         val p = ctx.applicationContext.getSharedPreferences("chaos_ui", Context.MODE_PRIVATE)
@@ -57,11 +60,17 @@ object UiPrefs {
         }.getOrDefault(ThemeStyle.PAPER)
         dynamicState.value = p.getBoolean("dynamic", true)
         navLabelsState.value = p.getBoolean("nav_labels", false)
+        privacyAgreedState.value = p.getBoolean("privacy_agreed_v1", false)
         kindState.value = runCatching {
             Charset.Kind.valueOf(p.getString("kind", null) ?: Charset.Kind.SIMPLIFIED.name)
         }.getOrDefault(Charset.Kind.SIMPLIFIED)
         normalizeState.value = p.getBoolean("normalize", true)
         previewSpState.value = p.getFloat("preview_sp", 24f)
+    }
+
+    fun setPrivacyAgreed(v: Boolean) {
+        privacyAgreedState.value = v
+        sp?.edit()?.putBoolean("privacy_agreed_v1", v)?.apply()
     }
 
     fun setAppearance(v: Appearance) {

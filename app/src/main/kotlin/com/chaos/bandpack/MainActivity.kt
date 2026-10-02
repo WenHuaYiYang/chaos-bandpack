@@ -8,6 +8,8 @@ import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.CompositionLocalProvider
 import com.chaos.bandpack.data.Incoming
+import com.chaos.bandpack.ui.component.PrivacyConsentGate
+import com.chaos.bandpack.ui.theme.ChaosTheme
 import com.chaos.bandpack.ui.theme.UiPrefs
 import com.chaos.bandpack.ui.ChaosApp
 import com.chaos.bandpack.ui.LocalWidthClass
@@ -31,8 +33,17 @@ class MainActivity : ComponentActivity() {
                 WindowWidthSizeClass.Medium -> WidthClass.MEDIUM
                 else -> WidthClass.COMPACT
             }
-            CompositionLocalProvider(LocalWidthClass provides width) {
-                ChaosApp()
+            if (!UiPrefs.privacyAgreed) {
+                // 首启隐私同意: 未同意前不渲染任何业务界面(先告知、先同意, 不同意可退出)。
+                // 放在 setContent 这层而不是 ChaosApp 内部: 同意门不需要窗口档位, 也避免在
+                // 非 inline 的主题 lambda 里提前 return。
+                ChaosTheme {
+                    PrivacyConsentGate(onAgree = { UiPrefs.setPrivacyAgreed(true) })
+                }
+            } else {
+                CompositionLocalProvider(LocalWidthClass provides width) {
+                    ChaosApp()
+                }
             }
         }
     }

@@ -66,6 +66,7 @@ import com.chaos.bandpack.data.icon.IconSpec
 import com.chaos.bandpack.ui.component.ChipFlow
 import com.chaos.bandpack.ui.component.ContentColumn
 import com.chaos.bandpack.ui.component.LicensesDialog
+import com.chaos.bandpack.ui.component.PrivacyPolicyDialog
 import com.chaos.bandpack.ui.component.MakerScaffold
 import com.chaos.bandpack.ui.component.SectionHeader
 import com.chaos.bandpack.ui.component.StatChip
@@ -471,6 +472,7 @@ private fun AboutBlock(about: Assets.About?, shown: Boolean) {
     val t = enterT(shown)
     val tone = LocalPageTone.current
     var showLicenses by remember { mutableStateOf(false) }
+    var showPrivacy by remember { mutableStateOf(false) }
     Surface(
         shape = MaterialTheme.shapes.extraLarge,
         color = tone.card,
@@ -523,10 +525,12 @@ private fun AboutBlock(about: Assets.About?, shown: Boolean) {
                 }
             }
 
-            // MiSans 的许可要求"在软件中特别注明使用了 MiSans 字体", 所以这一句必须在界面上;
+            // 两处"别人的东西"都必须在界面上说清: MiSans 的许可要求"在软件中特别注明",
+            // 而"原图"槽位显示的是从小米固件里解出来的图标, 不注明就会被当成自有素材。
             // 许可与第三方声明的全文放在弹层里(文本由构建期从仓库同步进 assets)。
             Text(
-                "预览图使用小米 MiSans 字体渲染。本应用按 AGPL-3.0 发布，第三方组件各有各的许可。",
+                "预览图使用小米 MiSans 字体渲染。「原图」槽位显示的是从小米固件资源包里解出的" +
+                    "手环应用图标，只作本地对照。本应用按 AGPL-3.0 发布，第三方组件各有各的许可。",
                 style = MaterialTheme.typography.bodySmall,
                 color = tone.muted,
             )
@@ -536,10 +540,17 @@ private fun AboutBlock(about: Assets.About?, shown: Boolean) {
             ) {
                 Text("开源许可与第三方声明")
             }
+            TextButton(
+                onClick = { showPrivacy = true },
+                modifier = Modifier.align(Alignment.Start),
+            ) {
+                Text("隐私政策")
+            }
         }
     }
 
     if (showLicenses) LicensesDialog(onDismiss = { showLicenses = false })
+    if (showPrivacy) PrivacyPolicyDialog(onDismiss = { showPrivacy = false })
 }
 
 /** 半宽事实卡: 圆形图标 + 值(强) + 标签(弱) */
