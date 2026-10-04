@@ -21,6 +21,7 @@ object IconSpec {
         Slot("alarm", "闹钟"),
         Slot("alipay", "支付宝"),
         Slot("breath", "呼吸放松"),
+        Slot("calendar", "日程"),
         Slot("perpetual_calendar", "日历"),
         Slot("camera", "遥控拍照"),
         Slot("card", "卡包"),
@@ -77,18 +78,17 @@ object IconSpec {
         Slot("set_wrist", "佩戴方式", Group.SETTINGS),
     )
     val SLOTS = DESKTOP + CONTROL + SETTINGS
-    fun stemOf(s: String): Slot? = SLOTS.firstOrNull { it.stem == if (s == "calendar") "perpetual_calendar" else s }
+    fun stemOf(s: String): Slot? = SLOTS.firstOrNull { it.stem == s }
     fun slots(group: Group): List<Slot> = SLOTS.filter { it.group == group }
 
-    /** 日历原图兼容旧素材名，仍只占一个槽位。 */
+    /** 日历的日期由程序绘制，预览只读取它自己的底图。 */
     fun previewStems(stem: String): List<String> =
-        if (stem == "perpetual_calendar") listOf(stem, "calendar") else listOf(stem)
+        if (stem == "perpetual_calendar") listOf("calendar_background") else listOf(stem)
 
     /** 精确匹配英文名或分类中文名；未注明分类的重名不匹配。 */
     fun matchName(base: String): Slot? {
         val name = base.trim()
         stemOf(name.lowercase())?.let { return it }
-        if (name == "日程" || name == "日历") return stemOf("perpetual_calendar")
         return SLOTS.filter { slot ->
             slot.label == name || listOf("_", "-", "·", " ").any {
                 name == slot.group.label + it + slot.label
@@ -99,7 +99,7 @@ object IconSpec {
     fun duplicateStems(stems: List<String?>): Set<String> =
         stems.filterNotNull().groupingBy { it }.eachCount().filterValues { it > 1 }.keys
 
-    /** 一个日历槽兼容两个文件名，勿扰自动补齐动画画布。 */
+    /** 各应用分别导出，勿扰自动补齐动画画布。 */
     fun export(picked: Map<String, ByteArray>): List<Cipk.Icon> {
         val normalized = linkedMapOf<String, ByteArray>()
         picked.forEach { (stem, bin) ->
@@ -110,7 +110,6 @@ object IconSpec {
             normalized[slot.stem] = bin
         }
         val out = normalized.map { Cipk.Icon(it.key, it.value) }.toMutableList()
-        normalized["perpetual_calendar"]?.let { out += Cipk.Icon("calendar", it) }
         normalized["ctrl_disturb"]?.let { bin ->
             val image = LvglIconCodec.decode(bin)
             val canvas = IntArray(160 * 124)

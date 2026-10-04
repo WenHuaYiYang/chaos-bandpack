@@ -421,7 +421,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                         }
                     }
                     Text(
-                        if (group == IconSpec.Group.DESKTOP) "112 × 112 · 日历使用自选静态图"
+                        if (group == IconSpec.Group.DESKTOP) "112 × 112 · 日程与日历分别选择，日历使用静态图"
                         else "64 × 64 · 透明图形可直接导入" + if (group == IconSpec.Group.CONTROL) " · 勿扰共用一张图" else "",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

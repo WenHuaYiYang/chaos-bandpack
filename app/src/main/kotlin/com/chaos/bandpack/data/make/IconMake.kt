@@ -3,13 +3,19 @@ package com.chaos.bandpack.data.make
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.net.Uri
+import android.os.Build
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.chaos.bandpack.data.icon.IconConvert
 import com.chaos.bandpack.data.Assets
 import com.chaos.bandpack.data.icon.IconSpec
+import com.chaos.bandpack.data.icon.CalendarPreview
 import com.chaos.bandpack.data.icon.LvglIconCodec
+import java.time.LocalDate
 
 /**
  * 桌面图标的处理与预览。
@@ -58,15 +64,47 @@ object IconMake {
     }
 
     private val stockCache = HashMap<String, ImageBitmap?>()
+    private var calendarCache: Pair<LocalDate, ImageBitmap>? = null
 
     /**
      * 系统原图标(逆向固件资源包得到, 构建时同步进 assets/stock_icons)。
      * 没有这一张时返回 null —— 界面用"系统原图标"占位表示"这个槽不放进包"。
      */
-    fun stockIcon(ctx: Context, stem: String): ImageBitmap? = stockCache.getOrPut(stem) {
-        runCatching {
-            val bytes = Assets.stockIcon(ctx, stem) ?: return@getOrPut null
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    fun stockIcon(ctx: Context, stem: String): ImageBitmap? {
+        if (stem == "perpetual_calendar") return calendarIcon(ctx, LocalDate.now())
+        return stockCache.getOrPut(stem) {
+            runCatching {
+                val bytes = Assets.stockIcon(ctx, stem) ?: return@getOrPut null
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+
+    /** 原背景上绘制当天日期，只在页面取图时更新。 */
+    private fun calendarIcon(ctx: Context, date: LocalDate): ImageBitmap? {
+        calendarCache?.takeIf { it.first == date }?.let { return it.second }
+        return runCatching {
+            val bytes = Assets.stockIcon(ctx, "perpetual_calendar") ?: return null
+            val background = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            require(background.width == IconSpec.CANVAS && background.height == IconSpec.CANVAS)
+            val bitmap = background.copy(Bitmap.Config.ARGB_8888, true)
+            background.recycle()
+            val canvas = Canvas(bitmap)
+            val face = runCatching { Typeface.createFromAsset(ctx.assets, "fonts/MiSans-Regular-subset.ttf") }
+                .getOrDefault(Typeface.SANS_SERIF)
+            fun text(value: String, top: Float, size: Float, color: Int, weight: Int) {
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    textSize = size
+                    this.color = color
+                    textAlign = Paint.Align.CENTER
+                    typeface = if (Build.VERSION.SDK_INT >= 28) Typeface.create(face, weight, false)
+                    else Typeface.create(face, if (weight >= 600) Typeface.BOLD else Typeface.NORMAL)
+                }
+                canvas.drawText(value, IconSpec.CANVAS / 2f, top - paint.fontMetrics.ascent, paint)
+            }
+            text(CalendarPreview.week(date), CalendarPreview.WEEK_TOP, CalendarPreview.WEEK_SIZE, CalendarPreview.WEEK_COLOR, 600)
+            text(CalendarPreview.day(date), CalendarPreview.DAY_TOP, CalendarPreview.DAY_SIZE, CalendarPreview.DAY_COLOR, 500)
+            bitmap.asImageBitmap().also { calendarCache = date to it }
         }.getOrNull()
     }
 }

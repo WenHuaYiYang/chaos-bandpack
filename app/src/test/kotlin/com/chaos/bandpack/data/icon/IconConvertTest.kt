@@ -81,7 +81,7 @@ class IconConvertTest {
         assertEquals(
             "安卓端槽位表与 icon_apply.rs 不一致",
             names.filterNot { it in IconSpec.ABSENT_ON_DEVICE },
-            (IconSpec.DESKTOP.map { it.stem } + "calendar").sorted(),
+            IconSpec.DESKTOP.map { it.stem }.sorted(),
         )
     }
 
@@ -95,7 +95,8 @@ class IconConvertTest {
             "activities" to "活力指标",
             "breath" to "呼吸放松",
             "camera" to "遥控拍照",
-            "calendar" to "日历",
+            "calendar" to "日程",
+            "perpetual_calendar" to "日历",
             "interconnect" to "多端联动",
             "mute" to "手机静音",
             "pressure" to "压力",
@@ -128,7 +129,7 @@ class IconConvertTest {
         var worstBodyName = ""
         var worstRelMean = 0.0
         var worstBodyMean = 0.0
-        for (stem in (IconSpec.DESKTOP.map { it.stem } + "calendar")) {
+        for (stem in IconSpec.DESKTOP.map { it.stem }) {
             val slot = IconSpec.Slot(stem, stem)
             val png = srcPng(slot.stem)
             val bin = File(ref, "${slot.stem}.bin")

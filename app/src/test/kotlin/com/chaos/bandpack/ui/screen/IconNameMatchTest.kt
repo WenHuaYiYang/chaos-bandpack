@@ -69,10 +69,14 @@ class IconNameMatchTest {
         assertNull(stemForFileName("天气.v2.png"))
         assertNull(stemForFileName("icon.weather.png"))
     }
-    @Test fun `日历旧名与分类中文名精准匹配`() {
-        assertEquals("perpetual_calendar", stemForFileName("calendar.png"))
+    @Test fun `日历日程与分类中文名分别精准匹配`() {
+        assertEquals("calendar", stemForFileName("calendar.png"))
+        assertEquals("calendar", stemForFileName("日程.png"))
+        assertEquals("calendar", stemForFileName("桌面_日程.png"))
         assertEquals("perpetual_calendar", stemForFileName("perpetual_calendar.png"))
         assertEquals("perpetual_calendar", stemForFileName("日历.png"))
+        assertEquals("perpetual_calendar", stemForFileName("桌面_日历.png"))
+        assertNull(stemForFileName("calendar_background.png"))
         assertEquals("ctrl_disturb", stemForFileName("控制中心_勿扰.png"))
         assertEquals("set_disturb", stemForFileName("设置_勿扰.png"))
         assertEquals("ctrl_flashlight", stemForFileName("CTRL_FLASHLIGHT.png"))

@@ -59,15 +59,12 @@ class SystemIconsTest {
         assertTrue(bin.contentEquals(LvglIconCodec.indexedRle(pixels, 160, 124)))
         File("build/icon120-check").apply { mkdirs() }.resolve("ctrl_dnd_gradient.bin").writeBytes(bin)
     }
-    @Test fun `54槽共56文件蓝牙与心率广播缺席且日历旧名兼容`() {
-        assertEquals(35, IconSpec.DESKTOP.size); assertEquals(9, IconSpec.CONTROL.size)
+    @Test fun `55槽共56文件蓝牙与心率广播缺席`() {
+        assertEquals(36, IconSpec.DESKTOP.size); assertEquals(9, IconSpec.CONTROL.size)
         assertEquals(10, IconSpec.SETTINGS.size)
-        assertEquals(54, IconSpec.SLOTS.size)
+        assertEquals(55, IconSpec.SLOTS.size)
         assertNull(IconSpec.stemOf("set_hr"))
         assertNull(IconSpec.matchName("设置_心率广播"))
-        assertEquals("perpetual_calendar", IconSpec.stemOf("calendar")!!.stem)
-        assertEquals(setOf("perpetual_calendar"), IconSpec.duplicateStems(listOf("calendar.png", "日历.png", "weather.png")
-            .map { IconSpec.matchName(it.substringBeforeLast('.'))?.stem }))
         val selected = IconSpec.SLOTS.associate { slot -> slot.stem to IconConvert.convert(plate(), 80, 80, slot).first }
         val icons = IconSpec.export(selected)
         assertEquals(56, icons.size)
@@ -78,12 +75,39 @@ class SystemIconsTest {
         val cipk = Cipk.build(icons); File(dumped, "pack.bin").writeBytes(cipk)
         assertEquals(56, Cipk.parse(cipk).size)
         val calendar = selected.getValue("perpetual_calendar")
-        assertTrue(runCatching { IconSpec.export(mapOf("calendar" to calendar, "perpetual_calendar" to calendar)) }.isFailure)
         assertTrue(runCatching { IconSpec.export(mapOf("ctrl_phone_conn" to calendar)) }.isFailure)
         assertTrue(runCatching { IconSpec.export(mapOf("set_hr" to calendar)) }.isFailure)
-        assertTrue(IconSpec.export(selected - "perpetual_calendar" - "ctrl_disturb").none {
+        assertTrue(IconSpec.export(selected - "calendar" - "perpetual_calendar" - "ctrl_disturb").none {
             it.stem in setOf("calendar", "perpetual_calendar", "ctrl_disturb", "ctrl_dnd")
         })
+    }
+    @Test fun `日历与日程的预览导入导出独立且分别清空`() {
+        assertEquals("日程", IconSpec.stemOf("calendar")!!.label)
+        assertEquals("日历", IconSpec.stemOf("perpetual_calendar")!!.label)
+        assertEquals(listOf("calendar"), IconSpec.previewStems("calendar"))
+        assertEquals(listOf("calendar_background"), IconSpec.previewStems("perpetual_calendar"))
+        assertTrue(IconSpec.duplicateStems(listOf("calendar.png", "日历.png")
+            .map { IconSpec.matchName(it.substringBeforeLast('.'))?.stem }).isEmpty())
+        assertEquals(setOf("calendar"), IconSpec.duplicateStems(listOf("calendar.png", "日程.png")
+            .map { IconSpec.matchName(it.substringBeforeLast('.'))?.stem }))
+        val schedule = IconConvert.convert(plate(), 80, 80, IconSpec.stemOf("calendar")!!).first
+        val calendar = IconConvert.convert(IntArray(80 * 80) { 0xffcc6633.toInt() }, 80, 80,
+            IconSpec.stemOf("perpetual_calendar")!!).first
+        val picked = mapOf("calendar" to schedule, "perpetual_calendar" to calendar)
+        val both = IconSpec.export(picked)
+        assertEquals(setOf("calendar", "perpetual_calendar"), both.map { it.stem }.toSet())
+        assertArrayEquals(schedule, both.single { it.stem == "calendar" }.data)
+        assertArrayEquals(calendar, both.single { it.stem == "perpetual_calendar" }.data)
+        assertFalse(schedule.contentEquals(calendar))
+        val dump = File("build/icon120-check").apply { mkdirs() }
+        for (stem in picked.keys) {
+            val one = IconSpec.export(picked - picked.keys.single { it != stem })
+            assertEquals(listOf(stem), one.map { it.stem })
+            assertEquals(listOf("$stem.bin"), Cipk.parse(Cipk.build(one)).map { it.first })
+            File(dump, "$stem-pack.bin").writeBytes(Cipk.build(one))
+        }
+        File(dump, "calendar-and-schedule-pack.bin").writeBytes(Cipk.build(both))
+        assertTrue(IconSpec.export(picked - picked.keys).isEmpty())
     }
     @Test fun `系统规则与设备侧映射一致`() {
         val repo = File(System.getProperty("chaos.repo") ?: error("必须指定 chaos.repo"))
