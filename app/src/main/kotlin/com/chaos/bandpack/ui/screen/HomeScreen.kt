@@ -115,7 +115,7 @@ fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
                         modifier = Modifier.weight(1f),
                         container = MaterialTheme.colorScheme.tertiaryContainer,
                         title = "图标投递",
-                        desc = "${IconSpec.SLOTS.size} 槽 · 换桌面图",
+                        desc = "${IconSpec.SLOTS.size} 槽 · 桌面与系统图标",
                         onClick = onIcon,
                         visual = { StockIconMosaic(it) },
                     )

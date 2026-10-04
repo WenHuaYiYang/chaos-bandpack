@@ -491,7 +491,7 @@ private fun AboutBlock(about: Assets.About?, shown: Boolean) {
                 color = tone.onField,
             )
             Text(
-                "为小米手环 10 Pro（固件 3.101.043）制作字体与桌面图标投递包。",
+                "为小米手环 10 Pro（固件 3.101.043）制作字体、桌面与系统图标投递包。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = tone.muted,
             )
@@ -512,7 +512,7 @@ private fun AboutBlock(about: Assets.About?, shown: Boolean) {
                         ),
                     )
                 }
-                add(Triple(chaosIcon(ChaosIcon.Flask), "${IconSpec.CANVAS}²", "图标画布"))
+                add(Triple(chaosIcon(ChaosIcon.Flask), "112 / 64", "图标画布"))
                 add(Triple(chaosIcon(ChaosIcon.Verified), BuildConfig.VERSION_NAME, "App 版本"))
             }
             facts.chunked(2).forEach { pair ->

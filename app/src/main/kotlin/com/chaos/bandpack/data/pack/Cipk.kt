@@ -9,8 +9,7 @@ import java.io.ByteArrayOutputStream
  *   张数 次: [u32 数据长度][u8 名字长度][名字][数据]
  *
  * 名字形如 `<stem>.bin`(ASCII, `^[A-Za-z0-9_]+\.bin$`, 24 字节以内)；手环只认
- * 内核模块 `icon_apply.rs` 里那 38 个 stem，名字对不上直接回 NAME 错误(码 5)。
- * 界面上摆的是这 38 个减去 `IconSpec.ABSENT_ON_DEVICE`（设备上不存在的应用）后的 35 个。
+ * 内核桌面表与系统资源重定向表中的 stem。
  */
 object Cipk {
 
@@ -23,7 +22,7 @@ object Cipk {
 
     class CipkError(message: String) : Exception(message)
 
-    /** 一张图标: stem(不带扩展名) + 已转换好的 50188 字节图标 bin */
+    /** 一张图标: stem(不带扩展名) + 按槽位规格转换的图标 bin */
     class Icon(val stem: String, val data: ByteArray) {
         val fileName: String get() = "$stem.bin"
     }

@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -130,6 +131,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     var toSave by draft::toSave
     var savedAs by draft::savedAs
     var pendingStem by draft::pendingStem
+    var group by draft::group
 
     fun tell(text: String) {
         scope.launch { snackbar.showSnackbar(text) }
@@ -139,7 +141,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
         scope.launch {
             busy = true
             val r = withContext(Dispatchers.Default) {
-                runCatching { IconMake.convert(ctx, uri) }
+                runCatching { IconMake.convert(ctx, uri, requireNotNull(IconSpec.stemOf(stem))) }
             }
             busy = false
             r.fold(
@@ -176,7 +178,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
      *   2. 或与该槽位的**中文显示名**相同 —— `天气.png` 也落"天气"。
      *
      * 认不出来的**不硬塞**: 塞进空格只会让用户事后一个个翻出来改, 不如直接报数让他改文件名。
-     * 同一槽位被多张命中时按选择顺序后者覆盖前者。
+     * 同一槽位被多张命中时报告重名，保留该槽原先的选择。
      * 单张失败(全透明 / 没有底板)**不影响其它张** —— 逐张收集, 不整批中断。
      */
     fun loadMany(uris: List<android.net.Uri>) {
@@ -188,9 +190,12 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                 var ok = 0
                 var unmatched = 0
                 val bad = mutableListOf<String>()
-                for (u in uris) {
-                    val stem = stemForName(ctx, u) ?: run { unmatched++; continue }
-                    runCatching { IconMake.convert(ctx, u) }
+                val names = uris.map { it to stemForName(ctx, it) }
+                val duplicates = IconSpec.duplicateStems(names.map { it.second })
+                for ((u, name) in names) {
+                    val stem = name ?: run { unmatched++; continue }
+                    if (stem in duplicates) { bad += "重名: ${IconSpec.stemOf(stem)?.label}"; continue }
+                    runCatching { IconMake.convert(ctx, u, requireNotNull(IconSpec.stemOf(stem))) }
                         .onSuccess { next[stem] = it.bytes; ok++ }
                         .onFailure { bad += (IconSpec.stemOf(stem)?.label ?: stem) }
                 }
@@ -203,7 +208,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                 buildString {
                     append("导入 ${res.ok} 张")
                     if (res.unmatched > 0) append("，${res.unmatched} 张文件名对不上")
-                    if (res.bad.isNotEmpty()) append("，${res.bad.size} 张图不合适")
+                    if (res.bad.isNotEmpty()) append("，${res.bad.size} 张重名或不合适：${res.bad.take(3).joinToString()}")
                 },
             )
         }
@@ -242,13 +247,15 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     // 外面分享进来的图片: 放进第一个空格。用完让上层清掉 URI, 免得在另一页被重复消费
     LaunchedEffect(autoUri) {
         val u = autoUri ?: return@LaunchedEffect
-        val stem = IconSpec.SLOTS.firstOrNull { !picked.containsKey(it.stem) }?.stem
+        val stem = IconSpec.slots(group).firstOrNull { !picked.containsKey(it.stem) }?.stem
         if (stem != null) loadInto(stem, u)
         onAutoConsumed()
     }
 
     // 参数变化就重打包(图标包很便宜), 导出前就能看到张数/体积/包号
     LaunchedEffect(picked, short, packName, title, pkgId) {
+        pack = null
+        savedAs = null
         if (picked.isEmpty() || short.isBlank() || packName.isBlank() || title.isBlank()) {
             pack = null
             return@LaunchedEffect
@@ -267,7 +274,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                         packName = packName,
                         title = title,
                         pkgName = pkgId.ifBlank { null },
-                        icons = picked.entries.sortedBy { it.key }.map { Cipk.Icon(it.key, it.value) },
+                        icons = IconSpec.export(picked),
                     ),
                 )
             }.getOrElse {
@@ -342,7 +349,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                             modifier = Modifier
                                 .clip(CircleShape)
                                 .background(tone.capsule)
-                                .clickable { batchPicker.launch(arrayOf("image/*")) }
+                                .clickable(enabled = !busy) { batchPicker.launch(arrayOf("image/*")) }
                                 .padding(horizontal = Spacing.m, vertical = Spacing.s),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -364,6 +371,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                             onClick = {
                                 // 一键清空全部是危险操作: 不弹确认框打断, 但必须能撤销
                                 val backup = picked
+                                pack = null
                                 picked = emptyMap()
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 scope.launch {
@@ -374,7 +382,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                                     if (r == SnackbarResult.ActionPerformed) picked = backup
                                 }
                             },
-                            enabled = picked.isNotEmpty(),
+                            enabled = picked.isNotEmpty() && !busy,
                         ) {
                             Icon(
                                 chaosIcon(ChaosIcon.DeleteSweep),
@@ -393,7 +401,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     // 空槽里那张图不是本应用画的: 它是手环原本的图标, 从固件资源包里解出来的。
                     // 出处写在图例下面一句话说清, 免得被当成自有素材(授权限制见开源许可页)。
                     Text(
-                        "「原图」是手环原本的图标，取自小米固件的资源包，只作本地对照。",
+                        "空槽保留系统图标；批量导入重名时请加分类，例如「控制中心_勿扰」。",
                         style = MaterialTheme.typography.labelSmall,
                         color = tone.muted,
                         modifier = Modifier.padding(top = Spacing.s),
@@ -401,18 +409,44 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                 }
             }
 
-            items(IconSpec.SLOTS, key = { it.stem }) { slot ->
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                        IconSpec.Group.entries.forEach { entry ->
+                            FilterChip(
+                                selected = group == entry,
+                                onClick = { group = entry },
+                                label = { Text(entry.label) },
+                            )
+                        }
+                    }
+                    Text(
+                        if (group == IconSpec.Group.DESKTOP) "112 × 112 · 日历使用自选静态图"
+                        else "64 × 64 · 透明图形可直接导入" + if (group == IconSpec.Group.CONTROL) " · 勿扰共用一张图" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            items(IconSpec.slots(group), key = { it.stem }) { slot ->
                 SlotCell(
                     label = slot.label,
                     selected = picked[slot.stem],
                     stock = if (picked.containsKey(slot.stem)) null else IconMake.stockIcon(ctx, slot.stem),
+                    group = slot.group,
                     onClick = {
-                        pendingStem = slot.stem
-                        picker.launch(arrayOf("image/*"))
+                        if (!busy) {
+                            pendingStem = slot.stem
+                            picker.launch(arrayOf("image/*"))
+                        }
                     },
                     onClear = {
-                        picked = picked - slot.stem
-                        tell("「${slot.label}」已清空，将使用系统原图标")
+                        if (!busy) {
+                            pack = null
+                            picked = picked - slot.stem
+                            tell("「${slot.label}」已清空，将使用系统原图标")
+                        }
                     },
                 )
             }
@@ -448,7 +482,8 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     } else {
                         ChipFlow {
                             StatChip(chaosIcon(ChaosIcon.Pin), p.pkgName, "表盘 ID")
-                            StatChip(chaosIcon(ChaosIcon.Grid), "${p.iconCount}", "入包张数")
+                            StatChip(chaosIcon(ChaosIcon.Grid), "${picked.size}", "已选槽位")
+                            StatChip(chaosIcon(ChaosIcon.Image), "${p.iconCount}", "入包文件")
                             StatChip(
                                 chaosIcon(ChaosIcon.Size),
                                 "%.2f MB".format(p.bytes.size / 1048576.0),
@@ -456,7 +491,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                             )
                             StatChip(
                                 chaosIcon(ChaosIcon.Dashboard),
-                                "${IconSpec.SLOTS.size - p.iconCount}",
+                                "${IconSpec.SLOTS.size - picked.size}",
                                 "保持原图",
                                 container = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 content = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -475,7 +510,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                         enabled = pp != null,
                         busy = busy,
                         label = if (pp == null) "导出 .bin"
-                        else "导出 · ${pp.iconCount} 张",
+                        else "导出 · ${picked.size} 槽",
                         hint = exportBlockReason(picked, busy, short, packName, title, pkgId, pp),
                         // 尾随 lambda 会绑到最后那个参数(这里是 modifier), onClick 必须显式写
                         onClick = {
@@ -506,6 +541,7 @@ private fun SlotCell(
     label: String,
     selected: ByteArray?,
     stock: ImageBitmap?,
+    group: IconSpec.Group,
     onClick: () -> Unit,
     onClear: () -> Unit,
 ) {
@@ -528,6 +564,7 @@ private fun SlotCell(
                 },
                 shape = MaterialTheme.shapes.large,
                 color = if (isSel) lerp(tone.field, tone.deep, 0.18f)
+                else if (stock != null && group == IconSpec.Group.CONTROL) Color(0xFF202024)
                 else lerp(tone.field, s.surface, 0.5f),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -710,9 +747,7 @@ private fun stemForName(ctx: android.content.Context, uri: android.net.Uri): Str
 internal fun stemForFileName(fileName: String): String? {
     val base = fileName.substringBeforeLast('.').trim()
     if (base.isEmpty()) return null
-    return IconSpec.SLOTS.firstOrNull {
-        it.stem.equals(base, ignoreCase = true) || it.label == base
-    }?.stem
+    return IconSpec.matchName(base)?.stem
 }
 
 /**

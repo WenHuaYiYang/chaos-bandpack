@@ -28,7 +28,7 @@ object ShellWriter {
      * 主包字节, 所以退成常量 —— 换来的是构建期校验: `syncPackAssets` 发现本地主包时
      * 会把它的号读出来跟这里比, 不一致直接让构建失败(见 app/build.gradle.kts)。
      */
-    const val MAIN_PKG = "434820260926"
+    const val MAIN_PKG = "979820260926"
 
     private const val PKG_PREFIX = "4348"
 

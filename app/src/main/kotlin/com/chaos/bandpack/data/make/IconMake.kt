@@ -7,7 +7,9 @@ import android.net.Uri
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.chaos.bandpack.data.icon.IconConvert
+import com.chaos.bandpack.data.Assets
 import com.chaos.bandpack.data.icon.IconSpec
+import com.chaos.bandpack.data.icon.LvglIconCodec
 
 /**
  * 桌面图标的处理与预览。
@@ -21,7 +23,7 @@ object IconMake {
     class Result(val bytes: ByteArray, val report: IconConvert.Report)
 
     /** content:// -> 图标字节。大图先按最长边 1024 降采样再交给几何处理 */
-    fun convert(ctx: Context, uri: Uri): Result {
+    fun convert(ctx: Context, uri: Uri, slot: IconSpec.Slot = IconSpec.DESKTOP.first()): Result {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
@@ -42,26 +44,16 @@ object IconMake {
         val px = IntArray(w * h)
         bmp.getPixels(px, 0, w, 0, 0, w, h)
         bmp.recycle()
-        val (out, rep) = IconConvert.convert(px, w, h)
+        val (out, rep) = IconConvert.convert(px, w, h, slot)
         return Result(out, rep)
     }
 
     /** 已转换的图标(112x112 BGRA + 12 字节头) -> 可直接画的位图 */
     fun previewOf(bin: ByteArray?): ImageBitmap? {
         bin ?: return null
-        if (bin.size < IconSpec.OUT_BYTES) return null
-        val n = IconSpec.CANVAS * IconSpec.CANVAS
-        val px = IntArray(n)
-        for (i in 0 until n) {
-            val o = IconSpec.HEADER.size + i * 4
-            val b = bin[o].toInt() and 0xFF
-            val g = bin[o + 1].toInt() and 0xFF
-            val r = bin[o + 2].toInt() and 0xFF
-            val a = bin[o + 3].toInt() and 0xFF
-            px[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
-        }
-        val bmp = Bitmap.createBitmap(IconSpec.CANVAS, IconSpec.CANVAS, Bitmap.Config.ARGB_8888)
-        bmp.setPixels(px, 0, IconSpec.CANVAS, 0, 0, IconSpec.CANVAS, IconSpec.CANVAS)
+        val image = runCatching { LvglIconCodec.decode(bin) }.getOrNull() ?: return null
+        val bmp = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
+        bmp.setPixels(image.pixels, 0, image.width, 0, 0, image.width, image.height)
         return bmp.asImageBitmap()
     }
 
@@ -73,7 +65,7 @@ object IconMake {
      */
     fun stockIcon(ctx: Context, stem: String): ImageBitmap? = stockCache.getOrPut(stem) {
         runCatching {
-            val bytes = ctx.assets.open("stock_icons/$stem.png").use { it.readBytes() }
+            val bytes = Assets.stockIcon(ctx, stem) ?: return@getOrPut null
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }.getOrNull()
     }

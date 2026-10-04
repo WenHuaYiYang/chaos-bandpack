@@ -1,66 +1,27 @@
 package com.chaos.bandpack.data.icon
 
-/**
- * 手环桌面图标的规格与槽位表。
- *
- * 规格是量出来的，不是拍的：画布 112x112，内容上限 100x100，四边至少 6px 透明留白
- * —— 与固件自带图标（`more.bin` / `calendar_background_icon.bin`）同规格。
- * 留白是桌面用来做磁贴间距的，少了会看着比系统图标大一圈。
- *
- * 槽位表来自内核模块 `icon_apply.rs` 的 `ICON_STEMS`：手环只认那张表里的名字，
- * 名字对不上直接回 NAME 错误（错误码 5），照片再好也进不去。所以表里的名字一律不许自己编，
- * 只允许"照抄再减去设备上不存在的应用"（见 [ABSENT_ON_DEVICE]，漂移守卫单测钉住这条）。
- * 名字要传**不带扩展名**的 stem（固件允许带 `.bin`，但没必要留两种写法）。
- */
-object IconSpec {
+import com.chaos.bandpack.data.pack.Cipk
 
+/** 图标槽位、尺寸及导出资源。 */
+object IconSpec {
     const val CANVAS = 112
     const val CONTENT = 100
-    const val MARGIN = (CANVAS - CONTENT) / 2      // 6
-
-    /** 文件头 12 字节：宽高与色深，固件按它判"这是不是我们的图标" */
-    val HEADER = byteArrayOf(
-        0x19, 0x10, 0x00, 0x00,
-        0x70, 0x00, 0x70, 0x00,
-        0xC0.toByte(), 0x01, 0x00, 0x00,
-    )
-
-    /** 12 字节头 + 112*112 个 BGRA 像素 */
-    const val OUT_BYTES = 12 + CANVAS * CANVAS * 4    // 50188
-
-    /** 一个槽位：传给手环的名字 + 界面上显示的中文名 */
-    data class Slot(val stem: String, val label: String)
-
-    /**
-     * 手环上**根本没有**这三个应用（逐个对着设备核过）。内核那张 `ICON_STEMS` 仍然收
-     * 这些名字（收着不报错，改了也没人读），但界面上不摆出来 —— 摆出来只会让人给一个
-     * 不存在的应用挑图标。漂移守卫单测拿这个集合做减法，所以两边仍然是一条来源。
-     */
-    val ABSENT_ON_DEVICE = setOf("dealt", "innovation_research", "perpetual_calendar")
-
-    /**
-     * 可换图标的桌面槽位（固件 `ICON_STEMS` 去掉 [ABSENT_ON_DEVICE] 之后按名字排序）。
-     *
-     * 中文名**不是**照英文 stem 猜的 —— 猜错过一整批（把 `pressure` 写成"血压"、
-     * `vitality` 写成"活力"、`share` 写成"分享"）。真值来源是
-     * 槽位表来自对固件 launcher 的逆向：
-     * 那份表是**在真机 launcher 图标列表里逐个读出来的** 32 个显示名，
-     * 再加上对 `share` / `vitality` / `activities` 等几项的逐项核对。
-     *
-     * 注意名字与 stem 的对应**不能按顺序对**（那份表是列表模式的显示顺序，不是 app_id），
-     * 只能按含义对：`activities` 是活力指标不是计步，`camera` 是遥控拍照，
-     * `aivs` 是小爱同学，`mute` 是手机静音，`calendar` 是日程。
-     *
-     * 只剩三项在那份 32 项表里没有（`oxygen` / `womenhealth` / 以及 `share` 的旧名），
-     * 名字沿用系统设置里的叫法。
-     */
-    val SLOTS: List<Slot> = listOf(
+    const val MARGIN = (CANVAS - CONTENT) / 2
+    const val OUT_BYTES = 12 + CANVAS * CANVAS * 4
+    val HEADER = LvglIconCodec.header(CANVAS, CANVAS, 16, 0, CANVAS * 4)
+    enum class Group(val label: String) { DESKTOP("桌面"), CONTROL("控制中心"), SETTINGS("设置") }
+    data class Slot(val stem: String, val label: String, val group: Group = Group.DESKTOP) {
+        val canvas: Int get() = if (group == Group.DESKTOP) CANVAS else 64
+        val content: Int get() = if (group == Group.DESKTOP) CONTENT else 64
+    }
+    val ABSENT_ON_DEVICE = setOf("dealt", "innovation_research")
+    val DESKTOP: List<Slot> = listOf(
         Slot("activities", "活力指标"),
         Slot("aivs", "小爱同学"),
         Slot("alarm", "闹钟"),
         Slot("alipay", "支付宝"),
         Slot("breath", "呼吸放松"),
-        Slot("calendar", "日程"),
+        Slot("perpetual_calendar", "日历"),
         Slot("camera", "遥控拍照"),
         Slot("card", "卡包"),
         Slot("chronograph", "秒表"),
@@ -92,8 +53,71 @@ object IconSpec {
         Slot("wxpay", "微信支付"),
     )
 
-    fun stemOf(s: String): Slot? = SLOTS.firstOrNull { it.stem == s }
+    val CONTROL = listOf(
+        Slot("ctrl_flashlight", "手电筒", Group.CONTROL),
+        Slot("ctrl_setting", "设置", Group.CONTROL),
+        Slot("ctrl_battery", "省电", Group.CONTROL),
+        Slot("ctrl_bright", "亮度", Group.CONTROL),
+        Slot("ctrl_alarm", "闹钟", Group.CONTROL),
+        Slot("ctrl_findphone", "找手机", Group.CONTROL),
+        Slot("ctrl_disturb", "勿扰", Group.CONTROL),
+        Slot("ctrl_raise", "抬腕亮屏", Group.CONTROL),
+        Slot("ctrl_game", "游戏模式", Group.CONTROL),
+    )
+    val SETTINGS = listOf(
+        Slot("set_notify", "通知", Group.SETTINGS),
+        Slot("set_desktop", "桌面", Group.SETTINGS),
+        Slot("set_display", "显示", Group.SETTINGS),
+        Slot("set_disturb", "勿扰", Group.SETTINGS),
+        Slot("set_safe", "安全", Group.SETTINGS),
+        Slot("set_battery", "电池", Group.SETTINGS),
+        Slot("set_motion", "运动", Group.SETTINGS),
+        Slot("set_preference", "偏好", Group.SETTINGS),
+        Slot("set_mydevice", "我的设备", Group.SETTINGS),
+        Slot("set_wrist", "佩戴方式", Group.SETTINGS),
+    )
+    val SLOTS = DESKTOP + CONTROL + SETTINGS
+    fun stemOf(s: String): Slot? = SLOTS.firstOrNull { it.stem == if (s == "calendar") "perpetual_calendar" else s }
+    fun slots(group: Group): List<Slot> = SLOTS.filter { it.group == group }
 
-    /** 手环侧的落地路径（只用于显示，手机不拼路径，路径由固件拼） */
+    /** 日历原图兼容旧素材名，仍只占一个槽位。 */
+    fun previewStems(stem: String): List<String> =
+        if (stem == "perpetual_calendar") listOf(stem, "calendar") else listOf(stem)
+
+    /** 精确匹配英文名或分类中文名；未注明分类的重名不匹配。 */
+    fun matchName(base: String): Slot? {
+        val name = base.trim()
+        stemOf(name.lowercase())?.let { return it }
+        if (name == "日程" || name == "日历") return stemOf("perpetual_calendar")
+        return SLOTS.filter { slot ->
+            slot.label == name || listOf("_", "-", "·", " ").any {
+                name == slot.group.label + it + slot.label
+            }
+        }.singleOrNull()
+    }
+
+    fun duplicateStems(stems: List<String?>): Set<String> =
+        stems.filterNotNull().groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+
+    /** 一个日历槽兼容两个文件名，勿扰自动补齐动画画布。 */
+    fun export(picked: Map<String, ByteArray>): List<Cipk.Icon> {
+        val normalized = linkedMapOf<String, ByteArray>()
+        picked.forEach { (stem, bin) ->
+            val slot = requireNotNull(stemOf(stem)) { "未知图标槽位: $stem" }
+            require(!normalized.containsKey(slot.stem)) { "图标槽位重复: ${slot.label}" }
+            val decoded = LvglIconCodec.decode(bin)
+            require(decoded.width == slot.canvas && decoded.height == slot.canvas) { "${slot.label}尺寸不匹配" }
+            normalized[slot.stem] = bin
+        }
+        val out = normalized.map { Cipk.Icon(it.key, it.value) }.toMutableList()
+        normalized["perpetual_calendar"]?.let { out += Cipk.Icon("calendar", it) }
+        normalized["ctrl_disturb"]?.let { bin ->
+            val image = LvglIconCodec.decode(bin)
+            val canvas = IntArray(160 * 124)
+            for (y in 0 until 64) System.arraycopy(image.pixels, y * 64, canvas, (y + 30) * 160 + 48, 64)
+            out += Cipk.Icon("ctrl_dnd", LvglIconCodec.indexedRle(canvas, 160, 124))
+        }
+        return out.sortedBy { it.stem }
+    }
     fun devicePath(stem: String): String = "/data/chaos/icons/$stem.bin"
 }

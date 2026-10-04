@@ -118,7 +118,7 @@ python3 tools/gen_chaos_icon.py      # 应用图标 -> chaos_icon.bin（需 Pill
   「同意并继续 / 不同意」；不同意则应用不可用，可重新查看或退出；
 - 同意记录在 `UiPrefs`（`privacy_agreed_v1`，键名带版本，政策大改时升版本重新征求）；
 - **随时回看**：设置页「隐私政策」入口（`PrivacyPolicyDialog`）；
-- Manifest 未申请任何权限（含网络），政策承诺与清单互为印证。
+- 最终 APK 未申请网络、短信、安装应用或危险权限；AndroidX 仅声明本包签名权限，用于限制动态广播接收者。
 
 ## 许可
 
@@ -128,3 +128,25 @@ python3 tools/gen_chaos_icon.py      # 应用图标 -> chaos_icon.bin（需 Pill
 内嵌需注明使用了 MiSans —— 应用内「设置 → 关于 → 开源许可」里有全文）、MingCute 图标
 （Apache-2.0）、AndroidX / Compose / Material 3（Apache-2.0）等。逐条见
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
+
+## 1.2.0 图标制作
+
+图标页按桌面、控制中心、设置分组，共 54 个选择槽，所有分类共用一个投递包。蓝牙与固件中没有对应入口的心率广播不提供选择槽。
+桌面按 112×112 画布和 100×100 内容框转换；普通系统图标按 64×64 转换，允许透明图形并保留透明边缘。
+日历是一张自选静态图，未选择时保留系统日历；导出同时生成 perpetual_calendar.bin 与 calendar.bin 以兼容旧名。
+控制中心勿扰选择一张图片，自动生成 ctrl_disturb.bin 和 160×124 I8/RLE 的 ctrl_dnd.bin，覆盖关闭、动画和结束态。
+因此已选槽位数与入包文件数分别显示，全部选择为 54 槽、56 文件；清空槽位会移除该槽及它的自动生成资源。
+
+批量导入精确匹配英文素材名或分类中文名，例如 ctrl_disturb.png、控制中心_勿扰.png、设置_勿扰.png。
+无分类的重复中文名（如勿扰、手电筒）不匹配；同批命中同槽的多张图片全部跳过并报告重名，不覆盖原选择。
+calendar.png、perpetual_calendar.png、日历.png 和日程.png 均匹配同一个日历槽。
+
+构建显式指定设备侧仓库。需要对拍的图标和容器测试缺素材会失败；本地 SVG 需先用设备侧生成器的渲染口径补齐 PNG。
+syncPackAssets 把源文件和系统素材配置列为输入；release 先核对同步文件，再回读最终签名 APK 与源文件逐字节核对。
+外发构建使用 -Pchaos.stockIcons=false。发布版本为 1.2.0 / versionCode 3，使用原私有签名文件覆盖安装。
+
+个人使用构建可启用 `-Pchaos.stockIcons=true`。设备侧先运行 `scripts/extract_stock_sys_icons.py`，
+按固件目录提取控制中心、设置原图，并与原固件解码像素核对；预览日历兼容旧 `calendar.png`。
+控制中心白色原图使用深色预览底面。当前固件资源缺少心率广播原图，且设备没有该设置入口，App 不保留它的槽位。
+构建会回读最终 APK，核对系统原图名单与每张 PNG 字节；关闭预览素材时核对 APK 没有残留图片。

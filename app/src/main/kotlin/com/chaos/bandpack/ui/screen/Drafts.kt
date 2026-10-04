@@ -49,6 +49,7 @@ class FontDraft {
 }
 
 class IconDraft {
+    var group by mutableStateOf(com.chaos.bandpack.data.icon.IconSpec.Group.DESKTOP)
     var picked by mutableStateOf<Map<String, ByteArray>>(emptyMap())
     var short by mutableStateOf("MyIcons")
     var packName by mutableStateOf("图标:MyIcons")

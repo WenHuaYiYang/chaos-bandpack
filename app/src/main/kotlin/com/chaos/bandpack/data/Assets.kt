@@ -33,7 +33,9 @@ object Assets {
         context.assets.list("stock_icons")?.toSet() ?: emptySet()
 
     fun stockIcon(context: Context, stem: String): ByteArray? =
-        runCatching { context.assets.open("stock_icons/$stem.png").use { it.readBytes() } }.getOrNull()
+        IconSpec.previewStems(stem).firstNotNullOfOrNull { name ->
+            runCatching { context.assets.open("stock_icons/$name.png").use { it.readBytes() } }.getOrNull()
+        }
 
     /**
      * 设置页"关于"要显示的真实数字。主包包号是编译期常量(见 [ShellWriter.MAIN_PKG]),
@@ -51,12 +53,12 @@ object Assets {
 
     fun about(context: Context): About? = runCatching {
         val a = context.assets
-        val stems = IconSpec.SLOTS.map { it.stem }.toSet()
+        val names = stockIconNames(context)
         About(
             mainPkg = ShellWriter.MAIN_PKG,
             koBytes = a.open("$DIR/chaos_sup.ko").use { it.readBytes().size },
             iconBytes = a.open("$DIR/chaos_icon.bin").use { it.readBytes().size },
-            stockIcons = stockIconNames(context).count { it.removeSuffix(".png") in stems },
+            stockIcons = IconSpec.SLOTS.count { slot -> IconSpec.previewStems(slot.stem).any { "$it.png" in names } },
         )
     }.getOrNull()
 }

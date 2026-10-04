@@ -55,7 +55,8 @@ object IconConvert {
      * 返回图标字节流与统计。源图尺寸没有硬性上限，但超过约 2000px 时解码端应先降采样，
      * 否则缩放这一步的内存与耗时都不划算。
      */
-    fun convert(src: IntArray, w: Int, h: Int): Pair<ByteArray, Report> {
+    fun convert(src: IntArray, w: Int, h: Int, slot: IconSpec.Slot = IconSpec.DESKTOP.first()): Pair<ByteArray, Report> {
+        if (slot.group != IconSpec.Group.DESKTOP) return convertSystem(src, w, h, slot)
         require(w > 0 && h > 0 && src.size >= w * h) { "像素数组与尺寸不匹配" }
 
         // 1. 外接方框（alpha > ALPHA_HIT）
@@ -108,6 +109,23 @@ object IconConvert {
         }
 
         return pack(canvas) to Report(coverage, side, IconSpec.CONTENT)
+    }
+
+    private fun convertSystem(src: IntArray, w: Int, h: Int, slot: IconSpec.Slot): Pair<ByteArray, Report> {
+        require(w > 0 && h > 0 && src.size >= w * h) { "像素数组与尺寸不匹配" }
+        var x0 = w; var y0 = h; var x1 = -1; var y1 = -1
+        for (y in 0 until h) for (x in 0 until w) if (src[y * w + x] ushr 24 != 0) {
+            x0 = min(x0, x); x1 = max(x1, x); y0 = min(y0, y); y1 = max(y1, y)
+        }
+        if (x1 < 0) throw Blank()
+        val side = max(x1 - x0 + 1, y1 - y0 + 1)
+        val square = IntArray(side * side)
+        val dx = (side - (x1 - x0 + 1)) / 2
+        val dy = (side - (y1 - y0 + 1)) / 2
+        for (y in y0..y1) System.arraycopy(src, y * w + x0, square, (y - y0 + dy) * side + dx, x1 - x0 + 1)
+        val scaled = scaleBox(square, side, 0, 0, side, slot.content)
+        val coverage = square.count { it ushr 24 > ALPHA_PLATE }.toDouble() / square.size
+        return LvglIconCodec.bgra(scaled, slot.canvas, slot.canvas) to Report(coverage, side, slot.content)
     }
 
     // ===== 缩放 =====

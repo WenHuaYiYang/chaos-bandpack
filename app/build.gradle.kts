@@ -1,4 +1,6 @@
 import java.util.Properties
+import java.security.MessageDigest
+import java.util.zip.ZipFile
 import org.jetbrains.kotlin.gradle.dsl.KotlinBaseExtension
 import org.jetbrains.kotlin.gradle.plugin.KotlinBasePlugin
 
@@ -57,6 +59,15 @@ val keystoreProps = Properties().apply {
 
 // 打包素材落在这里, 再用字符串路径挂进 assets(AGP 9 不让往 SourceSet 塞 Provider)
 val packAssetsDir = layout.buildDirectory.dir("pack-assets")
+val packSources = linkedMapOf(
+    "chaos_sup.ko" to deviceSource("supervisor", "chaos_sup.ko"),
+    "chaos_icon.bin" to deviceSource("chaos_icon.bin"),
+    "font_pack.lua" to deviceSource("installer", "font_pack.lua"),
+    "icon_pack.lua" to deviceSource("installer", "icon_pack.lua"),
+)
+val stockSource = listOf(File(chaosRepoDir, "../sys_icons/stock"), File(chaosRepoDir, "sys_icons/stock"))
+    .map { it.canonicalFile }.firstOrNull { it.isDirectory }
+
 
 /**
  * 同步打包素材。**缺什么不在这里失败**: 单元测试不需要这些素材, 构建也不该因为
@@ -66,17 +77,16 @@ val syncPackAssets by tasks.registering {
     group = "chaos"
     description = "把设备侧仓库的 ko / 应用图标 / 投递 Lua 同步进 assets"
     val dest = packAssetsDir.map { it.dir("pack") }
-    outputs.dir(dest)
+    inputs.files(packSources.values.filterNotNull())
+    inputs.property("sourcePaths", packSources.mapValues { it.value?.canonicalPath ?: "missing" })
+    inputs.property("stockIcons", stockIconsEnabled)
+    if (stockIconsEnabled && stockSource != null) inputs.files(fileTree(stockSource) { include("*.png") })
+    outputs.dir(packAssetsDir)
     doLast {
         val dir = dest.get().asFile
         dir.deleteRecursively()
         dir.mkdirs()
-        val wanted = linkedMapOf(
-            "chaos_sup.ko" to deviceSource("supervisor", "chaos_sup.ko"),
-            "chaos_icon.bin" to deviceSource("chaos_icon.bin"),
-            "font_pack.lua" to deviceSource("installer", "font_pack.lua"),
-            "icon_pack.lua" to deviceSource("installer", "icon_pack.lua"),
-        )
+        val wanted = packSources
         val missing = wanted.filterValues { it == null }.keys
         wanted.forEach { (name, src) -> src?.copyTo(File(dir, name), overwrite = true) }
         if (missing.isEmpty()) {
@@ -91,10 +101,7 @@ val syncPackAssets by tasks.registering {
         val stockDest = packAssetsDir.get().dir("stock_icons").asFile
         stockDest.deleteRecursively()
         if (stockIconsEnabled) {
-            val stockDir = listOf(
-                File(chaosRepoDir, "../sys_icons/stock"),
-                File(chaosRepoDir, "sys_icons/stock"),
-            ).map { it.canonicalFile }.firstOrNull { it.isDirectory }
+            val stockDir = stockSource
             val pngs = stockDir?.listFiles { f -> f.extension == "png" }.orEmpty()
             if (pngs.isEmpty()) {
                 logger.warn("chaos.stockIcons=true 但没找到系统原图标素材(${stockDir ?: "目录不存在"})")
@@ -125,7 +132,10 @@ val syncLegalAssets by tasks.registering(Sync::class) {
 
 /** release 打包的硬门: 素材不齐就**不许**出包 —— 装上了却打不出包的 App 比构建失败更糟 */val checkPackAssets by tasks.registering {
     group = "chaos"
-    description = "release 前检查打包素材是否齐全"
+    description = "release 前核对打包素材与设备侧源文件"
+    dependsOn(syncPackAssets)
+    inputs.files(packSources.values.filterNotNull())
+    inputs.dir(packAssetsDir)
     doLast {
         val dir = packAssetsDir.get().dir("pack").asFile
         val need = listOf("chaos_sup.ko", "chaos_icon.bin", "font_pack.lua", "icon_pack.lua")
@@ -137,6 +147,14 @@ val syncLegalAssets by tasks.registering(Sync::class) {
                     "准备方法见 README「构建前提」: 先在设备侧仓库构建出 chaos_sup.ko 与 chaos_icon.bin。",
             )
         }
+        packSources.forEach { (name, source) ->
+            if (source == null || !source.isFile) throw GradleException("源素材缺失: $name")
+            val hash = MessageDigest.getInstance("SHA-256")
+            val expected = hash.digest(source.readBytes())
+            val actual = hash.digest(File(dir, name).readBytes())
+            if (!expected.contentEquals(actual)) throw GradleException("打包素材与源文件不一致: $name")
+        }
+        logger.lifecycle("release 素材 SHA256 核对通过: ko、应用图标与两个 Lua")
     }
 }
 
@@ -159,8 +177,8 @@ android {
         applicationId = "com.chaos.bandpack"
         minSdk = 26          // 通知 + Compose + SAF 都够; 再低没有实际用户
         targetSdk = 36       // Android 16
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     buildFeatures {
@@ -206,6 +224,42 @@ tasks.withType<Test>().configureEach {
 tasks.matching { it.name == "preReleaseBuild" || it.name == "assembleRelease" }.configureEach {
     dependsOn(checkPackAssets)
 }
+
+// 回读最终 APK，核对实际交付文件中的素材。
+val verifyReleasePackAssets by tasks.registering {
+    group = "chaos"
+    dependsOn("packageRelease")
+    doLast {
+        val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        if (!apk.isFile) throw GradleException("签名 release APK 缺失")
+        ZipFile(apk).use { zip ->
+            packSources.forEach { (name, source) ->
+                val entry = zip.getEntry("assets/pack/$name") ?: throw GradleException("APK 素材缺失: $name")
+                val actual = zip.getInputStream(entry).use { it.readBytes() }
+                val expected = source?.readBytes() ?: throw GradleException("源素材缺失: $name")
+                if (!actual.contentEquals(expected)) throw GradleException("APK 内嵌素材与源不一致: $name")
+            }
+            val expectedIcons = if (stockIconsEnabled) stockSource?.listFiles { it.extension == "png" }.orEmpty()
+                .associateBy { "assets/stock_icons/${it.name}" } else emptyMap()
+            if (stockIconsEnabled && expectedIcons.isEmpty()) throw GradleException("个人预览构建缺少系统原图")
+            val actualIcons = zip.entries().asSequence().map { it.name }
+                .filter { it.startsWith("assets/stock_icons/") && it.endsWith(".png") }.toSet()
+            if (actualIcons != expectedIcons.keys) throw GradleException("APK 系统原图名单与构建配置不一致")
+            expectedIcons.forEach { (name, source) ->
+                val actual = zip.getInputStream(zip.getEntry(name)).use { it.readBytes() }
+                if (!actual.contentEquals(source.readBytes())) throw GradleException("APK 系统原图与源不一致: $name")
+            }
+            mapOf("THIRD_PARTY_NOTICES.md" to "THIRD_PARTY_NOTICES.md", "privacy_policy.md" to "PRIVACY_POLICY.md")
+                .forEach { (name, source) ->
+                    val entry = zip.getEntry("assets/legal/$name") ?: throw GradleException("APK 说明缺失: $name")
+                    val actual = zip.getInputStream(entry).use { it.readBytes() }
+                    if (!actual.contentEquals(rootProject.file(source).readBytes())) throw GradleException("APK 说明与源不一致: $name")
+                }
+        }
+        logger.lifecycle("最终 release APK 内嵌 ko、图标、Lua 与系统原图配置逐字节核对通过")
+    }
+}
+tasks.matching { it.name == "assembleRelease" }.configureEach { dependsOn(verifyReleasePackAssets) }
 
 dependencies {
     implementation(platform(libs.compose.bom))

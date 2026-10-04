@@ -3,7 +3,6 @@ package com.chaos.bandpack.data.pack
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 
@@ -13,8 +12,8 @@ import java.io.File
  * **跟着仓库走的那一组**(不需要任何外部素材): 用合成的 Lua 模板与占位载荷把两种包打出来,
  * 再拆回来核对结构。它保证"打包链本身"在任何机器上都是通的。
  *
- * **需要对拍素材的那一组**(设备侧仓库 / PC 侧产物 / 图标素材): 全部用 [assumeTrue] 守卫 ——
- * 素材不在就跳过, 不假装通过。其中最硬的一条是**与 PC 侧产物逐字节一致**:
+ * **需要对拍素材的那一组**(设备侧仓库 / PC 侧产物 / 图标素材): 必须具备对应素材 ——
+ * 素材缺失即失败。其中最硬的一条是**与 PC 侧产物逐字节一致**:
  * 图标包的 CIPK 是纯数据、Lua 由同一份模板替换同样的值, 所以两端产出的 `.bin`
  * 必须一个字节都不差。做得到这一条, App 打出来的包与 PC 脚本打的完全等价
  * (手环侧不需要区分是谁打的)。
@@ -36,7 +35,7 @@ class PackWriterTest {
     private fun artifact(name: String): File? =
         listOf(File(repo, name), File(repo.parentFile, name)).firstOrNull { it.exists() }
 
-    /** 真实素材(ko / 应用图标 / 两个投递 Lua); 缺任何一样就返回 null, 调用方 assume 跳过 */
+    /** 真实素材(ko / 应用图标 / 两个投递 Lua); 缺任何一样就返回 null, 对拍组据此失败 */
     private fun realAssets(): PackAssets? {
         val ko = dev("supervisor/chaos_sup.ko") ?: return null
         val icon = dev("chaos_icon.bin") ?: return null
@@ -267,7 +266,7 @@ class PackWriterTest {
     @Test
     fun `包名哈希与 PC 侧一致(拿 PC 打的包反推)`() {
         val iconPack = artifact("chaos-iconpack-Delta.bin")
-        assumeTrue("没有 PC 侧图标包, 跳过", iconPack != null)
+        assertTrue("没有 PC 侧图标包, 跳过", iconPack != null)
         val d = iconPack!!.readBytes()
         val (path, cipk) = ShellWriter.readEntry(d, 4)
         assertTrue(path.endsWith("pack.bin"))
@@ -278,26 +277,39 @@ class PackWriterTest {
     @Test
     fun `图标包与 PC 侧产物逐字节一致`() {
         val a = realAssets()
-        assumeTrue("设备侧素材不在本机, 跳过", a != null)
+        assertTrue("设备侧素材不在本机, 跳过", a != null)
         val pcPack = artifact("chaos-iconpack-Delta.bin")
-        assumeTrue("没有 PC 侧图标包, 跳过", pcPack != null)
+        assertTrue("没有 PC 侧图标包, 跳过", pcPack != null)
         val dir = artifact("assets/delta_lvgl")
-        assumeTrue("没有图标素材目录, 跳过", dir?.isDirectory == true)
+        assertTrue("没有图标素材目录, 跳过", dir?.isDirectory == true)
 
-        val icons = dir!!.listFiles { f -> f.name.endsWith(".bin") }!!
+        val desktop = dir!!.listFiles { f -> f.name.endsWith(".bin") }!!
             .sortedBy { it.name }
             .map { Cipk.Icon(it.name.removeSuffix(".bin"), it.readBytes()) }
-        assertTrue("素材少于 30 张, 目录不对", icons.size >= 30)
+        assertTrue("素材少于 30 张, 目录不对", desktop.size >= 30)
 
         val want = pcPack!!.readBytes()
+        val icons = Cipk.parse(ShellWriter.readEntry(want, 4).second).map { Cipk.Icon(it.first.removeSuffix(".bin"), it.second) }
+        desktop.forEach { icon ->
+            assertArrayEquals("PC 包桌面素材漂移: ${icon.stem}", icon.data, icons.single { it.stem == icon.stem }.data)
+        }
+        val luaTemplate = String(ShellWriter.readEntry(want, 1).second, Charsets.UTF_8)
+            .replace("local PACK_NAME = \"Delta\"", "local PACK_NAME = \"__PACK_NAME__\"")
+            .replace("local PACK_TITLE = \"图标投递 Delta\"", "local PACK_TITLE = \"__PACK_TITLE__\"")
         // 预览块用 PC 侧那份(像素渲染各端各自实现, 不比字节; 但同一预览输入 -> 同一产物字节)
         val preview = ShellBuilder.previewOf(want)
-        val res = IconPackBuilder.build(a!!, IconPackBuilder.Inputs(
+        val fixtureAssets = PackAssets(
+            ko = ShellWriter.readEntry(want, 2).second,
+            iconBin = ShellWriter.readEntry(want, 3).second,
+            fontLua = a!!.fontLua,
+            iconLua = luaTemplate,
+        )
+        val res = IconPackBuilder.build(fixtureAssets, IconPackBuilder.Inputs(
             short = "Delta", packName = "图标:Delta", title = "图标投递 Delta",
             pkgName = null, icons = icons,
         ), preview)
 
-        assertEquals("包名与 PC 侧不一致", "434851805607", res.pkgName)
+        assertEquals("包名与 PC 侧不一致", String(want, ShellWriter.PKG_OFF, ShellWriter.PKG_LEN, Charsets.US_ASCII), res.pkgName)
         assertEquals("体积与 PC 侧不一致", want.size, res.bytes.size)
         assertArrayEquals("与 PC 侧产物不是逐字节一致", want, res.bytes)
     }
@@ -305,7 +317,7 @@ class PackWriterTest {
     @Test
     fun `主包号常量与设备侧那份主包一致`() {
         val main = artifact("chaos-installer-10p-043-v1.bin")
-        assumeTrue("本地没有主包, 跳过(主包是构建产物, 不入库)", main != null)
+        assertTrue("本地没有主包, 跳过(主包是构建产物, 不入库)", main != null)
         val pkg = String(main!!.readBytes(), ShellWriter.PKG_OFF, ShellWriter.PKG_LEN, Charsets.US_ASCII)
         assertEquals(
             "App 里的主包号常量与设备侧主包不一致(改了主包号要同步 ShellWriter.MAIN_PKG)",
