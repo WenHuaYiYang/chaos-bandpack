@@ -3,6 +3,7 @@ package com.chaos.bandpack.ui
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.chaos.bandpack.data.DeviceTarget
 
 /** 宽度档位(只关心这三档; 具体数值由 material3-window-size-class 判定) */
 enum class WidthClass { COMPACT, MEDIUM, EXPANDED }
@@ -12,6 +13,7 @@ enum class WidthClass { COMPACT, MEDIUM, EXPANDED }
  * 界面按档位决定列数/边距/是否分栏 —— 不针对某一个手机尺寸写死布局。
  */
 val LocalWidthClass = staticCompositionLocalOf { WidthClass.COMPACT }
+val LocalDeviceTarget = staticCompositionLocalOf { DeviceTarget.TEN_PRO }
 
 /** 图标网格列数: 紧凑 4 / 中等 6 / 宽屏 8 */
 val WidthClass.gridColumns: Int

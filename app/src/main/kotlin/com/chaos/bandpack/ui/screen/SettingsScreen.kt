@@ -491,7 +491,7 @@ private fun AboutBlock(about: Assets.About?, shown: Boolean) {
                 color = tone.onField,
             )
             Text(
-                "为小米手环 10 Pro（固件 3.101.043）制作字体、桌面与系统图标投递包。",
+                "为小米手环 10 Pro（3.101.043）和 9 Pro（3.1.187）制作投递包；支持旧 BIN 编辑与 Chaos 工程。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = tone.muted,
             )

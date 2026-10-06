@@ -59,6 +59,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.chaos.bandpack.data.Incoming
+import com.chaos.bandpack.data.displayNameOf
+import com.chaos.bandpack.ui.screen.StudioWorkspace
+import com.chaos.bandpack.ui.component.StudioToolbar
+import com.chaos.bandpack.ui.component.FloatingDeviceSwitcher
 import com.chaos.bandpack.ui.screen.FontDraft
 import com.chaos.bandpack.ui.screen.FontMakerScreen
 import com.chaos.bandpack.ui.screen.HomeScreen
@@ -97,14 +101,21 @@ fun ChaosApp() {
         var dest by remember { mutableStateOf(Dest.HOME) }
         val fontDraft = remember { FontDraft() }
         val iconDraft = remember { IconDraft() }
+        val workspace = remember { StudioWorkspace(iconDraft, fontDraft) }
         // 外面送进来的文件(分享/打开): 按类型直接切到对应标签页
         var incoming by remember { mutableStateOf<Uri?>(null) }
+        var incomingPack by remember { mutableStateOf<Uri?>(null) }
 
-        LaunchedEffect(Unit) {
-            val u = Incoming.take() ?: return@LaunchedEffect
-            when (Incoming.kindOf(u, ctx.contentResolver.getType(u))) {
+        LaunchedEffect(Incoming.sequence) {
+            val source = Incoming.take() ?: return@LaunchedEffect
+            val u = source.uri
+            val mime = runCatching { ctx.contentResolver.getType(u) }.getOrNull()
+            val name = displayNameOf(ctx, u)
+            val kind = Incoming.kindOf(u, mime, name) ?: Incoming.kindOf(u, source.mime, name)
+            when (kind) {
                 Incoming.Kind.FONT -> { incoming = u; dest = Dest.FONT }
                 Incoming.Kind.IMAGE -> { incoming = u; dest = Dest.ICON }
+                Incoming.Kind.PACK -> { incomingPack = u }
                 null -> { /* 认不出是什么, 留在首页让用户自己选 */ }
             }
         }
@@ -129,11 +140,16 @@ fun ChaosApp() {
             label = "field",
         )
 
-        CompositionLocalProvider(LocalPageTone provides tone) {
+        CompositionLocalProvider(LocalPageTone provides tone, LocalDeviceTarget provides workspace.device) {
             // 色场画在最外层且吃满整屏: 状态栏与导航条下面也是这个颜色, 不是白边
             Box(Modifier.fillMaxSize().background(field)) {
                 Scaffold(
                     containerColor = Color.Transparent,
+                    topBar = {
+                        StudioToolbar(workspace, incomingPack, { incomingPack = null }) { project ->
+                            dest = if (project.icons?.images?.isNotEmpty() == true) Dest.ICON else Dest.FONT
+                        }
+                    },
                     bottomBar = { NavCapsule(dest) { dest = it } },
                 ) { bar ->
                     Box(Modifier.fillMaxSize().padding(bar)) {
@@ -178,6 +194,7 @@ fun ChaosApp() {
                                 Dest.SETTINGS -> SettingsScreen()
                             }
                         }
+                        FloatingDeviceSwitcher(workspace)
                     }
                 }
             }

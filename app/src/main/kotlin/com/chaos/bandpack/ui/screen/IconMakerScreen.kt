@@ -67,6 +67,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.chaos.bandpack.data.displayNameOf
 import com.chaos.bandpack.data.icon.IconConvert
+import com.chaos.bandpack.data.DeviceTarget
+import com.chaos.bandpack.ui.LocalDeviceTarget
+import com.chaos.bandpack.data.icon.PortableIcons
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import com.chaos.bandpack.data.icon.IconSpec
 import com.chaos.bandpack.data.make.IconMake
 import com.chaos.bandpack.data.make.PackMake
@@ -111,6 +116,7 @@ import com.chaos.bandpack.ui.theme.chaosIcon
 @Composable
 fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoConsumed: () -> Unit = {}) {
     val ctx = LocalContext.current
+    val device = LocalDeviceTarget.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -132,6 +138,10 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     var savedAs by draft::savedAs
     var pendingStem by draft::pendingStem
     var group by draft::group
+    val slots = IconSpec.all(device)
+    val chosen = picked.keys.count { IconSpec.stemOf(it, device) != null }
+    val omitted = picked.keys.filter { IconSpec.stemOf(it, device) == null && !(it == "ctrl_dnd" && device == DeviceTarget.TEN_PRO && "ctrl_disturb" in picked) }
+    LaunchedEffect(device) { if (IconSpec.slots(group, device).isEmpty()) group = IconSpec.Group.DESKTOP }
 
     fun tell(text: String) {
         scope.launch { snackbar.showSnackbar(text) }
@@ -140,15 +150,16 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     fun loadInto(stem: String, uri: android.net.Uri) {
         scope.launch {
             busy = true
-            val r = withContext(Dispatchers.Default) {
-                runCatching { IconMake.convert(ctx, uri, requireNotNull(IconSpec.stemOf(stem))) }
-            }
-            busy = false
+            val r = try {
+                withContext(Dispatchers.Default) {
+                    runCatching { IconMake.convert(ctx, uri, requireNotNull(IconSpec.stemOf(stem, device))) }
+                }
+            } finally { busy = false }
             r.fold(
                 onSuccess = { res ->
                     picked = picked + (stem to res.bytes)
                     haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
-                    val label = IconSpec.stemOf(stem)?.label ?: stem
+                    val label = IconSpec.stemOf(stem, device)?.label ?: stem
                     tell("「$label」已处理：内容占比 %.0f%%".format(res.report.coverage * 100))
                 },
                 onFailure = { e ->
@@ -185,24 +196,23 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
         if (uris.isEmpty()) return
         scope.launch {
             busy = true
-            val res = withContext(Dispatchers.IO) {
+            val res = try { withContext(Dispatchers.IO) {
                 val next = picked.toMutableMap()
                 var ok = 0
                 var unmatched = 0
                 val bad = mutableListOf<String>()
-                val names = uris.map { it to stemForName(ctx, it) }
+                val names = uris.map { it to stemForName(ctx, it, device) }
                 val duplicates = IconSpec.duplicateStems(names.map { it.second })
                 for ((u, name) in names) {
                     val stem = name ?: run { unmatched++; continue }
-                    if (stem in duplicates) { bad += "重名: ${IconSpec.stemOf(stem)?.label}"; continue }
-                    runCatching { IconMake.convert(ctx, u, requireNotNull(IconSpec.stemOf(stem))) }
+                    if (stem in duplicates) { bad += "重名: ${IconSpec.stemOf(stem, device)?.label}"; continue }
+                    runCatching { IconMake.convert(ctx, u, requireNotNull(IconSpec.stemOf(stem, device))) }
                         .onSuccess { next[stem] = it.bytes; ok++ }
-                        .onFailure { bad += (IconSpec.stemOf(stem)?.label ?: stem) }
+                        .onFailure { bad += (IconSpec.stemOf(stem, device)?.label ?: stem) }
                 }
                 BatchImport(next, ok, unmatched, bad)
-            }
+            } } finally { busy = false }
             picked = res.picked
-            busy = false
             if (res.ok > 0) haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
             tell(
                 buildString {
@@ -224,7 +234,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
         // 同字体页: 字节挂在中转站上, 去开系统保存界面那一段 Activity 允许被重建。
         // 取不到就明说, 不许静默 return —— 那种失败在界面上表现为"点了导出没反应"。
         val pend = ExportPending.take()
-        val suggested = pend?.name ?: "chaos-iconpack-$short.bin"
+        val suggested = pend?.name ?: "chaos-iconpack-${device.id}-$short.bin"
         val data = pend?.bytes ?: toSave
         if (uri == null || data == null) {
             tell("没有待写的包，请回到这一页再点一次导出")
@@ -247,13 +257,13 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     // 外面分享进来的图片: 放进第一个空格。用完让上层清掉 URI, 免得在另一页被重复消费
     LaunchedEffect(autoUri) {
         val u = autoUri ?: return@LaunchedEffect
-        val stem = IconSpec.slots(group).firstOrNull { !picked.containsKey(it.stem) }?.stem
+        val stem = IconSpec.slots(group, device).firstOrNull { !picked.containsKey(it.stem) }?.stem
         if (stem != null) loadInto(stem, u)
         onAutoConsumed()
     }
 
     // 参数变化就重打包(图标包很便宜), 导出前就能看到张数/体积/包号
-    LaunchedEffect(picked, short, packName, title, pkgId) {
+    LaunchedEffect(picked, short, packName, title, pkgId, device) {
         pack = null
         savedAs = null
         if (picked.isEmpty() || short.isBlank() || packName.isBlank() || title.isBlank()) {
@@ -274,8 +284,9 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                         packName = packName,
                         title = title,
                         pkgName = pkgId.ifBlank { null },
-                        icons = IconSpec.export(picked),
+                        icons = PortableIcons.forTarget(picked, device).icons,
                     ),
+                    device = device,
                 )
             }.getOrElse {
                 tell(it.message ?: "打包失败")
@@ -286,7 +297,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
 
     MakerScaffold(
         title = "图标投递表盘",
-        kicker = "系统美化",
+        kicker = "${device.label} · ${device.firmware}",
         snackbar = snackbar,
     ) { padding, bar ->
         // 整页一次淡入上移。按分节挂会漏掉懒加载的那些节, 见 enterPageT 的注释。
@@ -315,7 +326,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "已选 ${picked.size} / ${IconSpec.SLOTS.size}",
+                                "已选 $chosen / ${slots.size}",
                                 style = MaterialTheme.typography.titleLarge.tabular(),
                                 fontWeight = FontWeight.Bold,
                                 color = tone.onField,
@@ -333,7 +344,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                                 )
                             } else {
                                 LinearProgressIndicator(
-                                    progress = { picked.size / IconSpec.SLOTS.size.toFloat() },
+                                    progress = { chosen / slots.size.toFloat() },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(6.dp)
@@ -411,8 +422,8 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
 
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column {
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                        IconSpec.Group.entries.forEach { entry ->
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                        IconSpec.Group.entries.filter { IconSpec.slots(it, device).isNotEmpty() }.forEach { entry ->
                             FilterChip(
                                 selected = group == entry,
                                 onClick = { group = entry },
@@ -421,19 +432,22 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                         }
                     }
                     Text(
-                        if (group == IconSpec.Group.DESKTOP) "112 × 112 · 日程与日历分别选择，日历使用静态图"
-                        else "64 × 64 · 透明图形可直接导入" + if (group == IconSpec.Group.CONTROL) " · 勿扰共用一张图" else "",
+                        if (group == IconSpec.Group.DESKTOP) {
+                            if (device == DeviceTarget.TEN_PRO) "112 × 112 · 日程与日历分别选择，日历使用静态图"
+                            else "100 × 100 · 9 Pro 桌面素材"
+                        }
+                        else "按槽位尺寸适配 · 保留透明边缘" + if (group == IconSpec.Group.CONTROL) " · 勿扰共用一张图" else "",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
 
-            items(IconSpec.slots(group), key = { it.stem }) { slot ->
+            items(IconSpec.slots(group, device), key = { it.stem }) { slot ->
                 SlotCell(
                     label = slot.label,
                     selected = picked[slot.stem],
-                    stock = if (picked.containsKey(slot.stem)) null else IconMake.stockIcon(ctx, slot.stem),
+                    stock = if (picked.containsKey(slot.stem) || device == DeviceTarget.NINE_PRO) null else IconMake.stockIcon(ctx, slot.stem),
                     group = slot.group,
                     onClick = {
                         if (!busy) {
@@ -472,6 +486,13 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column {
                     SectionHeader("将写入的包", chaosIcon(ChaosIcon.SectionPack))
+                    if (omitted.isNotEmpty()) {
+                        Text("${device.label} 不支持以下素材，本次不导出，工程仍保留：" + omitted.joinToString { PortableIcons.label(it) },
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(Spacing.m))
+                    }
+                    if (device == DeviceTarget.NINE_PRO) Text("先安装 9 Pro Chaos v2.1；投递包导入到空槽位。仅适配 3.1.187，尚无真机验证。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val p = pack
                     if (p == null) {
                         Text(
@@ -482,7 +503,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     } else {
                         ChipFlow {
                             StatChip(chaosIcon(ChaosIcon.Pin), p.pkgName, "表盘 ID")
-                            StatChip(chaosIcon(ChaosIcon.Grid), "${picked.size}", "已选槽位")
+                            StatChip(chaosIcon(ChaosIcon.Grid), "$chosen", "已选槽位")
                             StatChip(chaosIcon(ChaosIcon.Image), "${p.iconCount}", "入包文件")
                             StatChip(
                                 chaosIcon(ChaosIcon.Size),
@@ -491,7 +512,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                             )
                             StatChip(
                                 chaosIcon(ChaosIcon.Dashboard),
-                                "${IconSpec.SLOTS.size - picked.size}",
+                                "${slots.size - chosen}",
                                 "保持原图",
                                 container = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 content = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -510,15 +531,15 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                         enabled = pp != null,
                         busy = busy,
                         label = if (pp == null) "导出 .bin"
-                        else "导出 · ${picked.size} 槽",
-                        hint = exportBlockReason(picked, busy, short, packName, title, pkgId, pp),
+                        else "导出 ${device.label} · $chosen 槽",
+                        hint = exportBlockReason(picked, busy, short, packName, title, pkgId, pp, device),
                         // 尾随 lambda 会绑到最后那个参数(这里是 modifier), onClick 必须显式写
                         onClick = {
                             val r = pp ?: return@ExportPill
-                            ExportPending.put(r.bytes, "chaos-iconpack-$short.bin")
+                            ExportPending.put(r.bytes, "chaos-iconpack-${device.id}-$short.bin")
                             toSave = r.bytes
                             savedAs = null
-                            runCatching { exporter.launch("chaos-iconpack-$short.bin") }
+                            runCatching { exporter.launch("chaos-iconpack-${device.id}-$short.bin") }
                                 .onFailure { tell("打不开保存界面：${it.message}") }
                         },
                     )
@@ -662,6 +683,7 @@ private fun ParamsBlock(
     pkgId: String,
     onPkgId: (String) -> Unit,
 ) {
+    val device = LocalDeviceTarget.current
     Column(
         modifier = Modifier.widthIn(max = Spacing.contentMaxWidth),
         verticalArrangement = Arrangement.spacedBy(Spacing.m),
@@ -710,6 +732,7 @@ private fun ParamsBlock(
                 Text(
                     if (pkgId.isBlank()) "12 位数字，留空则按内容推导"
                     else if (pkgId.length != 12) "${pkgId.length}/12"
+                    else if (device == DeviceTarget.NINE_PRO) "已固定；9 Pro 写入空槽，同名包须另取短名"
                     else "已固定，重投覆盖旧包",
                 )
             },
@@ -737,17 +760,17 @@ private class BatchImport(
  * 只认两种: 英文槽位名(不分大小写) 或 中文显示名。两种都是**精确**匹配 ——
  * 这里不做模糊匹配: 猜错会把图塞进用户没想改的槽位, 而他未必立刻发现。
  */
-private fun stemForName(ctx: android.content.Context, uri: android.net.Uri): String? =
-    displayNameOf(ctx, uri)?.let { stemForFileName(it) }
+private fun stemForName(ctx: android.content.Context, uri: android.net.Uri, device: DeviceTarget): String? =
+    displayNameOf(ctx, uri)?.let { stemForFileName(it, device) }
 
 /**
  * 文件名 -> 槽位名。抽成**纯函数**是为了能上 JVM 单测: 拿到 Context 的那半截
  * (查 DISPLAY_NAME) 没法在单测里跑, 而"名字怎么算对得上"恰恰是最容易写错的地方。
  */
-internal fun stemForFileName(fileName: String): String? {
+internal fun stemForFileName(fileName: String, device: DeviceTarget = DeviceTarget.TEN_PRO): String? {
     val base = fileName.substringBeforeLast('.').trim()
     if (base.isEmpty()) return null
-    return IconSpec.matchName(base)?.stem
+    return IconSpec.matchName(base, device)?.stem
 }
 
 /**
@@ -762,15 +785,16 @@ private fun exportBlockReason(
     title: String,
     pkgId: String,
     pack: IconPackBuilder.Result?,
+    device: DeviceTarget = DeviceTarget.TEN_PRO,
 ): String? {
-    val shortBytes = short.toByteArray(Charsets.US_ASCII).size
+    val shortBytes = short.toByteArray(Charsets.UTF_8).size
     return when {
         picked.isEmpty() -> "至少往一个槽位里放一张图标"
         busy -> null
         short.isBlank() -> "包短名是空的"
         shortBytes > IconPackBuilder.SHORT_BYTES ->
             "包短名 $shortBytes 字节，上限 ${IconPackBuilder.SHORT_BYTES}"
-        short.any { it.code <= 0x20 || it.code >= 0x7F } -> "包短名只能用可打印 ASCII，不支持中文"
+        device == DeviceTarget.TEN_PRO && short.any { it.code <= 0x20 || it.code >= 0x7F } -> "包短名只能用可打印 ASCII，不支持中文"
         packName.isBlank() -> "表盘名称是空的"
         title.isBlank() -> "标题文字是空的"
         pkgId.isNotBlank() && pkgId.length != 12 ->

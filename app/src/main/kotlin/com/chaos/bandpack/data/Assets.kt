@@ -13,6 +13,9 @@ object Assets {
 
     private const val DIR = "pack"
 
+    fun nineImporter(context: Context): String = context.assets.open("pack_n67/importer.lua.in").use { it.readBytes().toString(Charsets.UTF_8) }
+    fun nineInstaller(context: Context): ByteArray = context.assets.open("pack_n67/installer.bin").use { it.readBytes() }
+
     fun pack(context: Context): PackAssets = context.assets.let { a ->
         PackAssets(
             ko = a.open("$DIR/chaos_sup.ko").use { it.readBytes() },

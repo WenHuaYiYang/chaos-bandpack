@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chaos.bandpack.R
+import com.chaos.bandpack.ui.LocalDeviceTarget
 import com.chaos.bandpack.data.icon.IconSpec
 import com.chaos.bandpack.data.make.IconMake
 import com.chaos.bandpack.ui.component.ContentColumn
@@ -82,6 +83,7 @@ import com.chaos.bandpack.ui.theme.chaosIcon
  */
 @Composable
 fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
+    val device = LocalDeviceTarget.current
     val tone = LocalPageTone.current
     Column(
         modifier = Modifier
@@ -115,7 +117,7 @@ fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
                         modifier = Modifier.weight(1f),
                         container = MaterialTheme.colorScheme.tertiaryContainer,
                         title = "图标投递",
-                        desc = "${IconSpec.SLOTS.size} 槽 · 桌面与系统图标",
+                        desc = "${IconSpec.all(device).size} 槽 · 桌面与系统图标",
                         onClick = onIcon,
                         visual = { StockIconMosaic(it) },
                     )
@@ -125,7 +127,7 @@ fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
             }
 
             Text(
-                text = "Chaos · 为小米手环 10 Pro 制作投递包",
+                text = "Chaos · 为小米手环 ${device.label} 制作投递包",
                 style = MaterialTheme.typography.labelSmall,
                 color = tone.muted,
                 textAlign = TextAlign.Center,

@@ -182,12 +182,14 @@ object ShellBuilder {
 
     /** 取产物里的预览块原始字节 */
     fun previewOf(raw: ByteArray): ByteArray {
+        if (raw.size < REC_OFF) throw ShellWriter.PackError("容器头太短")
         val recEnd = ShellWriter.readU32(raw, 0x20)
+        if (recEnd !in REC_OFF..(raw.size - PREVIEW_HDR)) throw ShellWriter.PackError("预览块起点越界")
         ShellWriter.readU32(raw, recEnd).let {
             if (it != PREVIEW_TAG) throw ShellWriter.PackError("预览块标签不对: %#x".format(it))
         }
         val plen = ShellWriter.readU32(raw, recEnd + 8)
-        if (recEnd + PREVIEW_HDR + plen > raw.size) throw ShellWriter.PackError("预览块越界")
+        if (plen < 0 || plen > raw.size - recEnd - PREVIEW_HDR) throw ShellWriter.PackError("预览块越界")
         return raw.copyOfRange(recEnd, recEnd + PREVIEW_HDR + plen)
     }
 
@@ -199,6 +201,7 @@ object ShellBuilder {
      * 偏移取到完整的路径与内容。
      */
     fun parse(raw: ByteArray): Parsed {
+        if (raw.size > 32_000_000) throw ShellWriter.PackError("容器超过 32 MB")
         if (raw.size < REC_OFF + 16 * 3) throw ShellWriter.PackError("容器太短")
         if (ShellWriter.readU32(raw, 0) != MAGIC) throw ShellWriter.PackError("容器魔数不符")
         if (ShellWriter.readU32(raw, 4) != DEVICE_CODE) {
@@ -208,6 +211,7 @@ object ShellBuilder {
         if (n < 1 || n > 255) throw ShellWriter.PackError("文件条数非法: $n")
         val recEnd = ShellWriter.readU32(raw, 0x20)
         if (recEnd != recordEnd(n)) throw ShellWriter.PackError("记录表结束地址与条数不符: $recEnd")
+        if (recEnd > raw.size) throw ShellWriter.PackError("记录表越界")
         if (ShellWriter.readU32(raw, THEME_OFF + 4) != recEnd) {
             throw ShellWriter.PackError("主题表的记录表指针与 0x20 不一致")
         }
@@ -256,7 +260,8 @@ object ShellBuilder {
             val off = ShellWriter.readU32(raw, at + 8)
             val len = ShellWriter.readU32(raw, at + 12)
             if (off != expectOff) throw ShellWriter.PackError("第 ${i + 1} 条记录起点不连续: $off")
-            if (len < BLOB_HDR_LEN || off + len > raw.size) throw ShellWriter.PackError("第 ${i + 1} 条记录越界")
+            if (off !in 0..raw.size || len < BLOB_HDR_LEN || len > raw.size - off) throw ShellWriter.PackError("第 ${i + 1} 条记录越界")
+            if (ShellWriter.readU32(raw, at + 4) != 0) throw ShellWriter.PackError("记录保留字段非零")
             val head = ShellWriter.readU32(raw, off)
             val dlen = head and 0xFFFFFF
             val plen = head ushr 24
@@ -265,11 +270,15 @@ object ShellBuilder {
                 if (raw[off + k] != 0.toByte()) throw ShellWriter.PackError("第 ${i + 1} 条小头保留字节非 0")
             }
             val path = String(raw, off + BLOB_HDR_LEN, plen, Charsets.US_ASCII)
+            if (path.isEmpty() || path.any { it.code !in 32..126 } || path.split('/').any { it.isEmpty() || it == ".." }) {
+                throw ShellWriter.PackError("容器路径不合法")
+            }
             val data = raw.copyOfRange(off + BLOB_HDR_LEN + plen, off + len)
             files.add(path to data)
             expectOff += len
         }
         if (expectOff != raw.size) throw ShellWriter.PackError("文件区结尾多出 ${raw.size - expectOff} 字节")
+        if (files.map { it.first }.toSet().size != files.size) throw ShellWriter.PackError("容器路径重复")
 
         val zero = (0 until NAME_MAX).firstOrNull { raw[NAME_OFF + it] == 0.toByte() } ?: NAME_MAX
         val themeZero = (0 until THEME_NAME_MAX).firstOrNull { raw[THEME_NAME_OFF + it] == 0.toByte() }

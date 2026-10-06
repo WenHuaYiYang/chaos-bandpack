@@ -67,11 +67,12 @@ object Cipk {
             val name = String(blob, pos, nl, Charsets.US_ASCII)
             if (!NAME_RE.matches(name)) throw CipkError("第 ${idx + 1} 张名字不合规: $name")
             pos += nl
-            if (len < 0 || pos + len > blob.size) throw CipkError("第 ${idx + 1} 张数据越界")
+            if (len !in 1..ICON_LEN_MAX || len > blob.size - pos) throw CipkError("第 ${idx + 1} 张数据越界")
             out.add(name to blob.copyOfRange(pos, pos + len))
             pos += len
         }
         if (pos != blob.size) throw CipkError("容器尾部多出 ${blob.size - pos} 字节")
+        if (out.map { it.first }.toSet().size != out.size) throw CipkError("图标名字重复")
         return out
     }
 

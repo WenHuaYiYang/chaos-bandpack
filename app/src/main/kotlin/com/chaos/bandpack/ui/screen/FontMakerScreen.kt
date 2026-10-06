@@ -60,6 +60,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chaos.bandpack.data.font.Charset
 import com.chaos.bandpack.data.font.FontSubset
+import com.chaos.bandpack.ui.LocalDeviceTarget
+import com.chaos.bandpack.data.DeviceTarget
+import androidx.compose.material3.Switch
 import com.chaos.bandpack.data.make.FontMake
 import com.chaos.bandpack.data.make.PackMake
 import com.chaos.bandpack.data.pack.FontPackBuilder
@@ -79,6 +82,7 @@ import com.chaos.bandpack.ui.component.enterPageT
 import com.chaos.bandpack.ui.component.SectionHeader
 import com.chaos.bandpack.ui.component.StatChip
 import com.chaos.bandpack.ui.theme.ChaosPalette
+import com.chaos.bandpack.ui.theme.LocalPageTone
 import com.chaos.bandpack.ui.theme.Spacing
 import com.chaos.bandpack.ui.theme.enterLayer
 import com.chaos.bandpack.ui.theme.tabular
@@ -114,6 +118,7 @@ private const val TRAD_COVER_OK = 9000
 @Composable
 fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoConsumed: () -> Unit = {}) {
     val ctx = LocalContext.current
+    val device = LocalDeviceTarget.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -166,6 +171,7 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                 srcErr = "读不到这个文件：${it.message}"
                 return@launch
             }
+            draft.preserveImported = false
             srcBytes = bytes
             srcName = name
             val check = withContext(Dispatchers.Default) { runCatching { FontMake.precheck(bytes) }.getOrNull() }
@@ -199,7 +205,7 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
         val pend = ExportPending.take()
         // SAF 回的 URI 里读不到可读的名字(lastPathSegment 往往是媒体库行号),
         // 所以用我们自己拼的那一个; 兜底再退账到 URI。
-        val suggested = pend?.name ?: "chaos-fontpack-$label.bin"
+        val suggested = pend?.name ?: "chaos-fontpack-${device.id}-$label.bin"
         val data = pend?.bytes ?: toSave
         if (uri == null || data == null) {
             scope.launch { snackbar.showSnackbar("没有待写的包，请回到这一页再点一次导出") }
@@ -223,24 +229,27 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
     }
 
     // 选项/源变化 → 重做(归一化 + 子集化)。防抖 300ms: 25MB 字体要几秒
-    LaunchedEffect(srcBytes, kind, normalize) {
+    LaunchedEffect(srcBytes, kind, normalize, draft.preserveImported) {
+        made = null
+        pack = null
         val src = srcBytes ?: return@LaunchedEffect
         delay(300)
         busy = true
         err = null
-        made = withContext(Dispatchers.Default) {
-            runCatching { FontMake.build(ctx, src, FontSubset.Options(kind, normalize)) }
-                .getOrElse {
-                    err = it.message ?: it.toString()
-                    null
-                }
-        }
-        busy = false
+        try {
+            made = withContext(Dispatchers.Default) {
+                runCatching { FontMake.build(ctx, src, FontSubset.Options(kind, normalize), draft.preserveImported) }
+                    .getOrElse { err = it.message ?: it.toString(); null }
+            }
+        } finally { busy = false }
     }
 
     // 参数齐了就实时打包: 导出前能看到最终包号与体积
-    LaunchedEffect(made, label, packName, title, pkgId) {
-        val m = made ?: run { pack = null; return@LaunchedEffect }
+    LaunchedEffect(made, label, packName, title, pkgId, device) {
+        pack = null
+        savedAs = null
+        toSave = null
+        val m = made ?: return@LaunchedEffect
         if (label.isBlank() || packName.isBlank() || title.isBlank()) {
             pack = null
             return@LaunchedEffect
@@ -265,6 +274,7 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                         pkgName = pkgId.ifBlank { null },
                         font = m.font,
                     ),
+                    device = device,
                 )
             }.getOrElse {
                 err = it.message ?: it.toString()
@@ -278,7 +288,7 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
 
     MakerScaffold(
         title = "字体投递表盘",
-        kicker = "系统美化",
+        kicker = "${device.label} · ${device.firmware}",
         snackbar = snackbar,
     ) { padding, bar ->
         // 整页一次淡入上移。按分节挂会漏掉懒加载的那些节, 见 enterPageT 的注释。
@@ -292,6 +302,11 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                 .verticalScroll(rememberScrollState()),
         ) {
             ContentColumn {
+                if (device == DeviceTarget.NINE_PRO) {
+                    Text("先安装 9 Pro Chaos v2.1；投递包导入到空槽位。仅适配 3.1.187，尚无真机验证。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(Spacing.m))
+                }
                 // ① 字体文件: 没选的时候整块就是按钮, 不再配一句"选好以后这里会出现……"
                 SectionHeader("字体文件", chaosIcon(ChaosIcon.SectionFont))
                 val src = srcBytes
@@ -319,6 +334,27 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
 
                 AnimatedVisibility(visible = srcBytes != null, enter = fadeIn(), exit = fadeOut()) {
                     Column {
+                        val tone = LocalPageTone.current
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.large,
+                            color = tone.card,
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = Spacing.l, vertical = Spacing.m),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("保留字体原字节", style = MaterialTheme.typography.titleSmall,
+                                        color = tone.onField)
+                                    Text("导入旧包时默认开启；关闭后按下方选项重新处理。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = tone.muted)
+                                }
+                                Switch(checked = draft.preserveImported, onCheckedChange = { draft.preserveImported = it })
+                            }
+                        }
+                        Spacer(Modifier.height(Spacing.m))
                         if (wide) {
                             // 宽屏: 左参数 右预览
                             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxl)) {
@@ -330,7 +366,7 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                                         title, { titleTouched = true; title = it.take(24) },
                                         titleWarn, pkgId,
                                         { pkgId = it.filter { c -> c.isDigit() }.take(12) },
-                                        kind, { kind = it }, normalize, { normalize = it },
+                                        kind, { draft.preserveImported = false; kind = it }, normalize, { draft.preserveImported = false; normalize = it },
                                     )
                                 }
                                 Column(Modifier.weight(1f)) {
@@ -346,7 +382,7 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                                 title, { titleTouched = true; title = it.take(24) },
                                 titleWarn, pkgId,
                                 { pkgId = it.filter { c -> c.isDigit() }.take(12) },
-                                kind, { kind = it }, normalize, { normalize = it },
+                                kind, { draft.preserveImported = false; kind = it }, normalize, { draft.preserveImported = false; normalize = it },
                             )
                             SectionHeader("预览", chaosIcon(ChaosIcon.FontSize))
                             PreviewBlock(made, busy, kind, title, previewSp, { previewSp = it }, err = err)
@@ -365,17 +401,17 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
                     enabled = p != null,
                     busy = busy,
                     label = if (p == null) "导出 .bin"
-                    else "导出 · %.2f MB".format(p.bytes.size / 1048576.0),
+                    else "导出 ${device.label} · %.2f MB".format(p.bytes.size / 1048576.0),
                     hint = exportBlockReason(srcBytes, made, busy, label, packName, title, pkgId, err, p),
                     // 尾随 lambda 会绑到最后那个参数(这里是 modifier), 所以 onClick 必须显式写
                     onClick = {
                         val r = p ?: return@ExportPill
-                        ExportPending.put(r.bytes, "chaos-fontpack-$label.bin")
+                        ExportPending.put(r.bytes, "chaos-fontpack-${device.id}-$label.bin")
                         toSave = r.bytes
                         savedAs = null
                         // 系统没有一个 app 接这个 intent 时 launch 会直接抛,
                         // 在点击回调里抛就是闪退 —— 包住并给出可读的一条。
-                        runCatching { exporter.launch("chaos-fontpack-$label.bin") }
+                        runCatching { exporter.launch("chaos-fontpack-${device.id}-$label.bin") }
                             .onFailure {
                                 scope.launch { snackbar.showSnackbar("打不开保存界面：${it.message}") }
                             }
@@ -504,6 +540,7 @@ private fun OptionsBlock(
     normalize: Boolean,
     onNormalize: (Boolean) -> Unit,
 ) {
+    val device = LocalDeviceTarget.current
     val labelBytes = label.toByteArray(Charsets.UTF_8).size
     val titleWidth = TitleText.width(title)
     val titleOver = titleWidth > TitleText.MAX_HALF
@@ -554,6 +591,7 @@ private fun OptionsBlock(
                 Text(
                     if (pkgId.isBlank()) "12 位数字，留空则按内容推导"
                     else if (pkgId.length != 12) "${pkgId.length}/12"
+                    else if (device == DeviceTarget.NINE_PRO) "已固定；9 Pro 写入空槽，同名字体须另取短名"
                     else "已固定，重投覆盖旧包",
                 )
             },

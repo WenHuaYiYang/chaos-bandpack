@@ -7,6 +7,8 @@ import com.chaos.bandpack.data.pack.FontPackBuilder
 import com.chaos.bandpack.data.pack.IconPackBuilder
 import com.chaos.bandpack.data.pack.PackAssets
 import com.chaos.bandpack.data.pack.PreviewFactory
+import com.chaos.bandpack.data.DeviceTarget
+import com.chaos.bandpack.data.pack.NinePackBuilder
 
 /**
  * 打包编排。素材(内核模块 / 应用图标 / 两个投递 Lua)在进程里只读一次 ——
@@ -22,11 +24,13 @@ object PackMake {
             cached ?: Assets.pack(ctx.applicationContext).also { cached = it }
         }
 
-    fun fontPack(ctx: Context, inputs: FontPackBuilder.Inputs): FontPackBuilder.Result =
-        FontPackBuilder.build(assets(ctx), inputs, PreviewFactory.fontBlob(ctx.assets, inputs.title))
+    fun fontPack(ctx: Context, inputs: FontPackBuilder.Inputs, device: DeviceTarget = DeviceTarget.TEN_PRO): FontPackBuilder.Result =
+        if (device == DeviceTarget.NINE_PRO) NinePackBuilder.font(Assets.nineImporter(ctx), inputs, PreviewFactory.fontBlob(ctx.assets, inputs.title))
+        else FontPackBuilder.build(assets(ctx), inputs, PreviewFactory.fontBlob(ctx.assets, inputs.title))
 
-    fun iconPack(ctx: Context, inputs: IconPackBuilder.Inputs): IconPackBuilder.Result =
-        IconPackBuilder.build(
+    fun iconPack(ctx: Context, inputs: IconPackBuilder.Inputs, device: DeviceTarget = DeviceTarget.TEN_PRO): IconPackBuilder.Result =
+        if (device == DeviceTarget.NINE_PRO) NinePackBuilder.icons(Assets.nineImporter(ctx), inputs,
+            PreviewFactory.iconBlob(ctx.assets, inputs.title, inputs.short)) else IconPackBuilder.build(
             assets(ctx), inputs,
             PreviewFactory.iconBlob(ctx.assets, inputs.title, inputs.short),
         )

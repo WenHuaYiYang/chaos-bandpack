@@ -7,6 +7,7 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import com.chaos.bandpack.data.DeviceTarget
 
 /**
  * 任意图片 -> 手环桌面图标（112x112，BGRA，50188 字节）。
@@ -97,18 +98,18 @@ object IconConvert {
         if (coverage <= PLATE_MIN_COVERAGE) throw NoPlate(coverage)
 
         // 3. 只缩放，不重画：方框 -> 内容框
-        val fitted = scaleBox(src, w, bx, by, side, IconSpec.CONTENT)
+        val fitted = scaleBox(src, w, bx, by, side, slot.content)
 
         // 4. 居中贴到画布，透明边自然成为桌面间距
-        val canvas = IntArray(IconSpec.CANVAS * IconSpec.CANVAS)
-        val off = IconSpec.MARGIN
-        for (y in 0 until IconSpec.CONTENT) {
-            val srcRow = y * IconSpec.CONTENT
-            val dstRow = (y + off) * IconSpec.CANVAS + off
-            System.arraycopy(fitted, srcRow, canvas, dstRow, IconSpec.CONTENT)
+        val canvas = IntArray(slot.width * slot.height)
+        val off = (slot.width - slot.content) / 2
+        for (y in 0 until slot.content) {
+            val srcRow = y * slot.content
+            val dstRow = (y + off) * slot.width + off
+            System.arraycopy(fitted, srcRow, canvas, dstRow, slot.content)
         }
 
-        return pack(canvas) to Report(coverage, side, IconSpec.CONTENT)
+        return encode(canvas, slot) to Report(coverage, side, slot.content)
     }
 
     private fun convertSystem(src: IntArray, w: Int, h: Int, slot: IconSpec.Slot): Pair<ByteArray, Report> {
@@ -125,8 +126,17 @@ object IconConvert {
         for (y in y0..y1) System.arraycopy(src, y * w + x0, square, (y - y0 + dy) * side + dx, x1 - x0 + 1)
         val scaled = scaleBox(square, side, 0, 0, side, slot.content)
         val coverage = square.count { it ushr 24 > ALPHA_PLATE }.toDouble() / square.size
-        return LvglIconCodec.bgra(scaled, slot.canvas, slot.canvas) to Report(coverage, side, slot.content)
+        val canvas = IntArray(slot.width * slot.height)
+        val ox = (slot.width - slot.content) / 2; val oy = (slot.height - slot.content) / 2
+        for (y in 0 until slot.content) System.arraycopy(scaled, y * slot.content, canvas, (y + oy) * slot.width + ox, slot.content)
+        return encode(canvas, slot) to Report(coverage, side, slot.content)
     }
+
+    private fun encode(pixels: IntArray, slot: IconSpec.Slot): ByteArray =
+        if (slot.device == DeviceTarget.NINE_PRO) LvglIconCodec.bgra8(pixels, slot.width, slot.height)
+        else LvglIconCodec.bgra(pixels, slot.width, slot.height)
+
+    internal fun resizeSquare(pixels: IntArray, side: Int, to: Int): IntArray = scaleBox(pixels, side, 0, 0, side, to)
 
     // ===== 缩放 =====
 

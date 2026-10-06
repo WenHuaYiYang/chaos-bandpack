@@ -24,8 +24,15 @@ object FontMake {
      * [src] 是源字体字节。跑在后台线程(25MB 字体子集化要几秒)。
      * [cacheDir] 用来落一份临时 ttf 供 [Typeface.createFromFile] 使用。
      */
-    fun build(ctx: Context, src: ByteArray, options: FontSubset.Options): Made {
-        val (out, report) = FontSubset.subset(src, options)
+    fun build(ctx: Context, src: ByteArray, options: FontSubset.Options, preserve: Boolean = false): Made {
+        val (out, report) = if (!preserve) FontSubset.subset(src, options) else {
+            val font = com.chaos.bandpack.data.font.Sfnt(src)
+            val cmap = font.cmap()
+            src to FontSubset.Report(src.size, src.size, font.numGlyphs(), font.numGlyphs(), cmap.size,
+                com.chaos.bandpack.data.font.Charset.gb2312.size, options.charset,
+                com.chaos.bandpack.data.font.Charset.traditionalHits(cmap), null, 0,
+                font.tables.keys.sorted(), emptyList(), listOf("保留导入投递包的字体字节，未再次裁剪或归一化"))
+        }
         val f = File(ctx.cacheDir, "font_preview.ttf")
         f.writeBytes(out)
         val face = runCatching { Typeface.createFromFile(f) }.getOrNull()

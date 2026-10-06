@@ -20,6 +20,14 @@ object LvglIconCodec {
         return out.array()
     }
 
+    fun bgra8(pixels: IntArray, w: Int, h: Int): ByteArray {
+        require(w in 1..512 && h in 1..512 && pixels.size == w * h)
+        return ByteBuffer.allocate(4 + pixels.size * 4).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putInt(5 or (w shl 10) or (h shl 21))
+            pixels.forEach { putInt(it) }
+        }.array()
+    }
+
     private data class ColorCount(val color: Int, val count: Int)
     private fun channel(color: Int, ch: Int) = (color ushr (ch * 8)) and 255
     private class Box(val colors: List<ColorCount>) {
@@ -104,6 +112,15 @@ object LvglIconCodec {
     }
 
     fun decode(bin: ByteArray): Image {
+        if (bin.size >= 4 && bin[0].toInt() and 255 != 0x19) {
+            val input = ByteBuffer.wrap(bin).order(ByteOrder.LITTLE_ENDIAN)
+            val word = input.getInt(0)
+            val w = (word ushr 10) and 2047; val h = (word ushr 21) and 2047
+            require(word and 1023 == 5 && w in 1..512 && h in 1..512 && bin.size == 4 + w * h * 4) {
+                "不是完整的 9 Pro BGRA 图像"
+            }
+            return Image(w, h, IntArray(w * h) { input.getInt(4 + it * 4) })
+        }
         require(bin.size >= 12 && bin[0].toInt() and 255 == 0x19) { "图像头不合法" }
         val input = ByteBuffer.wrap(bin).order(ByteOrder.LITTLE_ENDIAN)
         val cf = bin[1].toInt() and 255
@@ -116,7 +133,13 @@ object LvglIconCodec {
             require(stride >= w * 4 && bin.size == 12 + stride * h)
             return Image(w, h, IntArray(w * h) { i -> input.getInt(12 + (i / w) * stride + (i % w) * 4) })
         }
-        require(cf == 10 && flags == 8 && stride >= w && bin.size >= 24) { "图像编码不支持" }
+        if (cf == 10 && flags == 0) {
+            require(stride >= w && bin.size == 12 + 1024 + stride * h)
+            return Image(w, h, IntArray(w * h) { i ->
+                input.getInt(12 + (bin[12 + 1024 + i / w * stride + i % w].toInt() and 255) * 4)
+            })
+        }
+        require(cf == 10 && flags == 8 && stride in w..512 && bin.size >= 24) { "图像编码不支持" }
         require(input.getInt(12) == 1 && input.getInt(16) == bin.size - 24 && input.getInt(20) == 1024 + stride * h)
         val raw = ByteArray(input.getInt(20))
         var at = 24; var dst = 0

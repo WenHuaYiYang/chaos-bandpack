@@ -35,6 +35,7 @@ class FontDraft {
     // 起点取自设置页的默认值(新建一条制作线时才读, 之后这条线自己说了算)
     var kind by mutableStateOf(UiPrefs.defaultKind)
     var normalize by mutableStateOf(UiPrefs.defaultNormalize)
+    var preserveImported by mutableStateOf(false)
 
     var made by mutableStateOf<FontMake.Made?>(null)
     var busy by mutableStateOf(false)

@@ -68,6 +68,13 @@ val packSources = linkedMapOf(
 val stockSource = listOf(File(chaosRepoDir, "../sys_icons/stock"), File(chaosRepoDir, "sys_icons/stock"))
     .map { it.canonicalFile }.firstOrNull { it.isDirectory }
 
+val nineRepoDir = file((findProperty("chaos.n67.repo") as String?)
+    ?: File(chaosRepoDir, "build/9pro-port-v2.1/chaos-9pro").path)
+val nineSources = linkedMapOf(
+    "importer.lua.in" to File(nineRepoDir, "n67/importer.lua.in"),
+    "installer.bin" to File(nineRepoDir, "n67/generated/resource.bin"),
+)
+
 
 /**
  * 同步打包素材。**缺什么不在这里失败**: 单元测试不需要这些素材, 构建也不该因为
@@ -80,6 +87,8 @@ val syncPackAssets by tasks.registering {
     inputs.files(packSources.values.filterNotNull())
     inputs.property("sourcePaths", packSources.mapValues { it.value?.canonicalPath ?: "missing" })
     inputs.property("stockIcons", stockIconsEnabled)
+    inputs.property("nineRepo", nineRepoDir.absolutePath)
+    inputs.files(nineSources.values.filter { it.isFile })
     if (stockIconsEnabled && stockSource != null) inputs.files(fileTree(stockSource) { include("*.png") })
     outputs.dir(packAssetsDir)
     doLast {
@@ -89,6 +98,9 @@ val syncPackAssets by tasks.registering {
         val wanted = packSources
         val missing = wanted.filterValues { it == null }.keys
         wanted.forEach { (name, src) -> src?.copyTo(File(dir, name), overwrite = true) }
+        val nineDest = packAssetsDir.get().dir("pack_n67").asFile
+        nineDest.deleteRecursively(); nineDest.mkdirs()
+        nineSources.forEach { (name, source) -> if (source.isFile) source.copyTo(File(nineDest, name), overwrite = true) }
         if (missing.isEmpty()) {
             logger.lifecycle("打包素材已同步: ${dir.absolutePath} (来自 ${chaosRepoDir.absolutePath})")
         } else {
@@ -136,6 +148,7 @@ val syncLegalAssets by tasks.registering(Sync::class) {
     dependsOn(syncPackAssets)
     inputs.files(packSources.values.filterNotNull())
     inputs.dir(packAssetsDir)
+    inputs.files(nineSources.values)
     doLast {
         val dir = packAssetsDir.get().dir("pack").asFile
         val need = listOf("chaos_sup.ko", "chaos_icon.bin", "font_pack.lua", "icon_pack.lua")
@@ -155,6 +168,22 @@ val syncLegalAssets by tasks.registering(Sync::class) {
             if (!expected.contentEquals(actual)) throw GradleException("打包素材与源文件不一致: $name")
         }
         logger.lifecycle("release 素材 SHA256 核对通过: ko、应用图标与两个 Lua")
+        nineSources.forEach { (name, source) ->
+            val copied = packAssetsDir.get().file("pack_n67/$name").asFile
+            if (!source.isFile || !copied.isFile || !source.readBytes().contentEquals(copied.readBytes())) {
+                throw GradleException("9 Pro 素材缺失或不一致: $name；请指定 -Pchaos.n67.repo=<移植源码根>")
+            }
+        }
+        val nineInstallerHash = MessageDigest.getInstance("SHA-256").digest(nineSources.getValue("installer.bin").readBytes())
+            .joinToString("") { "%02x".format(it.toInt() and 255) }
+        if (nineInstallerHash != "fc6abe218af0535e02b93c40d16ade91ed3defe3801deec7d8cb72138207d806") {
+            throw GradleException("9 Pro 主包与已核对的 v2.1 原始产物不一致")
+        }
+        val importerHash = MessageDigest.getInstance("SHA-256").digest(nineSources.getValue("importer.lua.in").readBytes())
+            .joinToString("") { "%02x".format(it.toInt() and 255) }
+        if (importerHash != "e9555cbe73229ad43a62470fe66fb45b406315b6b08c5bc19871dd778769c265") {
+            throw GradleException("9 Pro 导入模板与原始 v2.1 源文件不一致")
+        }
     }
 }
 
@@ -177,8 +206,8 @@ android {
         applicationId = "com.chaos.bandpack"
         minSdk = 26          // 通知 + Compose + SAF 都够; 再低没有实际用户
         targetSdk = 36       // Android 16
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
     }
 
     buildFeatures {
@@ -220,6 +249,7 @@ tasks.named("preBuild") { dependsOn(syncPackAssets, syncLegalAssets) }
 // 然后全部按 assume 跳过, 看起来"全绿"其实一条都没验)。
 tasks.withType<Test>().configureEach {
     systemProperty("chaos.repo", chaosRepoDir.absolutePath)
+    systemProperty("chaos.n67.repo", nineRepoDir.absolutePath)
 }
 tasks.matching { it.name == "preReleaseBuild" || it.name == "assembleRelease" }.configureEach {
     dependsOn(checkPackAssets)
@@ -238,6 +268,12 @@ val verifyReleasePackAssets by tasks.registering {
                 val actual = zip.getInputStream(entry).use { it.readBytes() }
                 val expected = source?.readBytes() ?: throw GradleException("源素材缺失: $name")
                 if (!actual.contentEquals(expected)) throw GradleException("APK 内嵌素材与源不一致: $name")
+            }
+            nineSources.forEach { (name, source) ->
+                val entry = zip.getEntry("assets/pack_n67/$name") ?: throw GradleException("APK 9 Pro 素材缺失: $name")
+                if (!zip.getInputStream(entry).use { it.readBytes() }.contentEquals(source.readBytes())) {
+                    throw GradleException("APK 9 Pro 素材与源不一致: $name")
+                }
             }
             val expectedIcons = if (stockIconsEnabled) stockSource?.listFiles { it.extension == "png" }.orEmpty()
                 .associateBy { "assets/stock_icons/${it.name}" } else emptyMap()
@@ -277,6 +313,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.documentfile)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
 
     // 字体子集化 / 图标转换 / 投递包容器都是纯 JVM 逻辑(不碰 android.*), 单测跑在桌面 JVM
     testImplementation(libs.junit)

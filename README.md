@@ -1,18 +1,20 @@
 # Chaos 制作台（Android）
 
-在手机上给**小米手环 10 Pro** 制作投递表盘：挑一份字体或一组图标，在本地打成手环能收下的
+在手机上给**小米手环 10 Pro 和 9 Pro** 制作投递表盘：挑一份字体或一组图标，在本地打成手环能收下的
 `.bin`，再走手环官方的表盘侧载通道投进去。全程离线 —— 不联网、不上传、不依赖手机厂商的云。
 
 - 设备：小米手环 10 Pro（p67），固件 **3.101.043**
+- 设备：小米手环 9 Pro（n67），固件 **3.1.187**；沿用提供的 v2.1 移植，尚无真机验收
 - 许可：**AGPL-3.0**（`LICENSE`）；第三方内容见 `THIRD_PARTY_NOTICES.md`
-- 版本：1.1.0（`com.chaos.bandpack`）
+- 版本：1.3.0 / versionCode 4（`com.chaos.bandpack`，沿用原签名）
 
 ## 它做什么
 
 | 制作页 | 输入 | 产出 |
 |---|---|---|
 | 更换字体 | 一份 `.ttf` / `.otf` | 字体投递包：子集化 + 垂直度量归一化，可选保留繁体 |
-| 桌面图标 | 一批图片 | 图标投递包：转成 112×112 BGRA，按槽位名（英文名或中文显示名）自动对号 |
+| 图标制作 | 图片或已制作的图标投递 BIN | 桌面、控制中心和设置共用一个包，按所选设备的尺寸和格式转换 |
+| 继续编辑 | 图标／字体投递 BIN 或 `.chaosproj` | 恢复素材和参数，可切换设备重新导出 |
 
 两种包都是手环的表盘容器。投递之后在**表盘管理**里切过去、点一下按钮就生效 ——
 换字体、换桌面图标都不需要重刷主包、不需要重启。
@@ -37,15 +39,15 @@ python3 tools/gen_chaos_icon.py      # 应用图标 -> chaos_icon.bin（需 Pill
 构建 App 时把设备侧仓库的位置告诉它：
 
 ```bash
-./gradlew assembleDebug -Pchaos.repo=/path/to/Chaos-Module
+./gradlew assembleDebug -Pchaos.repo=/path/to/Chaos-Module -Pchaos.n67.repo=/path/to/chaos-9pro
 ```
 
 也可以写进 `local.properties`（`chaos.repo=/path/to/Chaos-Module`）或用环境变量 `CHAOS_REPO`；
 默认值是 `../../Chaos-Module`（把两个仓库放成邻居）。两种目录形状都认：设备侧工程根
 （里面还有一层 `Chaos-Module/`）与已发布的仓库根（`supervisor/`、`installer/` 就在这一层）。
 
-设备侧素材没准备好也能跑单元测试（打包链那些用例用合成素材），但 `assembleRelease`
-会被拦下 —— 装上了却打不出包的 App 比构建失败更糟。
+测试和 release 构建均须准备两种设备的输入。双设备对拍还使用移植源码旁的原始手机端
+测试样本，以及设备侧旧图标包和字体样本；缺少样本会失败，不能把跳过视为验证通过。
 
 ### 可选：预览用的字体
 
@@ -57,9 +59,9 @@ python3 tools/gen_chaos_icon.py      # 应用图标 -> chaos_icon.bin（需 Pill
 ## 构建
 
 ```bash
-./gradlew test              # 单元测试
-./gradlew assembleDebug     # 调试包
-./gradlew assembleRelease   # 有 android/keystore.properties 才签名，否则产出未签名包
+./gradlew test -Pchaos.repo=<10Pro设备侧根> -Pchaos.n67.repo=<9Pro移植源码根>
+./gradlew assembleDebug -Pchaos.repo=<10Pro设备侧根> -Pchaos.n67.repo=<9Pro移植源码根>
+./gradlew assembleRelease -Pchaos.repo=<10Pro设备侧根> -Pchaos.n67.repo=<9Pro移植源码根>
 ```
 
 | 项 | 取值 |
@@ -73,19 +75,20 @@ python3 tools/gen_chaos_icon.py      # 应用图标 -> chaos_icon.bin（需 Pill
 
 ## 产物长什么样
 
-投递包就是手环的表盘容器：
+两种设备的投递包都是表盘容器。10 Pro 布局为：
 
 ```
 [头部][包名 12B][显示名 64B][主题表][记录表][缩略图块][文件区]
                       四个槽: 投递 Lua / 内核模块 / 应用图标 / 载荷(字体或图标包)
 ```
 
-壳由 `ShellBuilder` 从零合成，**不依赖任何外部模板**（主题表那几个指针与计数本来就能从文件
+10 Pro 壳由 `ShellBuilder` 从零合成，**不依赖任何外部模板**（主题表那几个指针与计数本来就能从文件
 条数算出来）。格式的完整规则与设备侧实现见设备侧仓库的 `tools/container_shell.py`。
 
 **与 PC 脚本的等价性**是这一行的验收线：同一份输入，App 打出的图标包与 PC 脚本打的
 **逐字节一致**（`PackWriterTest` 里钉着这条；预览图像素各端各自渲染，不比字节）。
-包号由载荷哈希推导，所以同一份内容重投是幂等的、不同内容自动分开。
+包号由载荷哈希推导，所以同一份内容的包身份稳定、不同内容自动分开。9 Pro 使用
+原始移植的壳布局和导入 Lua，图标逐张保存为 DAT、字体分块；导入只写空槽。
 
 ## 代码结构
 
@@ -99,7 +102,7 @@ python3 tools/gen_chaos_icon.py      # 应用图标 -> chaos_icon.bin（需 Pill
 
 ## 已知限制
 
-- 只适配固件 **3.101.043**。换固件要重做一整套地址与结构。
+- 10 Pro 适配固件 **3.101.043**，9 Pro 适配移植版的 **3.1.187**。换固件需要重新验证地址与结构。
 - 图标槽位是设备上实际存在的那批；文件名认不出来时**不猜**，会把对不上的报出来让你改名。
 - 图片只做缩放 / 居中 / 覆盖率检查：不补底、不切圆角、不换色，不合适就给出可读原因。
 - 图标页空槽位与首页预览里的"原图"是**从固件资源包里解出**的手环应用图标（不可再分发，
@@ -144,7 +147,25 @@ calendar.png 和日程.png 匹配日程；perpetual_calendar.png 和日历.png �
 
 构建显式指定设备侧仓库。需要对拍的图标和容器测试缺素材会失败；本地 SVG 需先用设备侧生成器的渲染口径补齐 PNG。
 syncPackAssets 把源文件和系统素材配置列为输入；release 先核对同步文件，再回读最终签名 APK 与源文件逐字节核对。
-外发构建使用 -Pchaos.stockIcons=false。发布版本为 1.2.0 / versionCode 3，使用原私有签名文件覆盖安装。
+外发构建使用 -Pchaos.stockIcons=false。1.2.0 是此前的三分类版本；当前发布版本为 1.3.0 / versionCode 4，使用原私有签名文件覆盖安装。
+
+## 1.3.0 双设备与工程
+
+点击显示当前型号的悬浮按钮打开选择面板，选择 10 Pro / 9 Pro。按钮可拖动，不占页面布局高度。面板显示对应固件，以及当前图标可导出和保留在工程的数量；切换保留素材并清除上一设备的导出结果。点击“打开文件”选择旧图标投递 BIN、字体投递 BIN 或 `.chaosproj` 工程。旧包中的图标恢复到槽位，可单张替换、批量导入或清空，再导出所选设备的投递包。输入文件中的 Lua 和 ko 不会执行。
+
+“保存工程”将图标、字体源、参数及设备选择一起保存到 `.chaosproj`。两种设备共用同一工程：同义槽位转换名称、尺寸和图像头；目标没有的素材会显示未导出名单，工程仍保留它们。9 Pro 没有 10 Pro 的独立日历槽，日历素材保留在工程中，9 Pro 的日程单独对应 schedule。字体从旧包导入时默认“保留字体原字节”，避免重复裁剪；修改字集或归一化选项会改为重新处理。
+
+10 Pro 维持 55 槽、CIPK 及原投递链；9 Pro 开放 81 槽，包括控制中心、设置和系统应用，继续排除两个蓝牙连接槽。9 Pro 导出为 LVGL 8 BGRA + 独立 DAT，字体采用 64000 字节分块，最大 8 MB。9 Pro 须先安装 Chaos v2.1；顶部“9 Pro 主包”可导出原始安装容器，其内容未修改。9 Pro 导入器只写空槽，同名包需另取短名。
+
+准备 9 Pro 构建输入：
+
+```bash
+python tools/prepare_nine_source.py --release <Chaos-9Pro-手机与手环-v2.1-发布包.zip> --firmware <187固件.bin> --out <本机准备目录>
+```
+
+将 `-Pchaos.n67.repo` 指向准备目录中的 `chaos-9pro`。工具校对 ZIP、源码与固件哈希，以及全部 66 个入口指纹；只解压，不执行附带程序。独立容器对拍使用同目录下 `chaos-bandpack-9pro/app/src/test/resources/n67` 的原始样本，不允许缺件跳过。旧 35 图标包导入回归另需 `~/Downloads/chaos-iconpack-pure.bin`，字体回归优先使用设备仓库的 `Chaos-Module/fonts/lxgw-wenkai-band.ttf`（须小于 8 MB）；均为本机测试输入，不在仓库再分发。
+
+release 会核对最终 APK 内 10 Pro ko / Lua 以及 9 Pro 模板和原始安装容器与源文件逐字节一致。9 Pro 仅完成离线核对，没有真机验收；不支持其他固件强行安装。
 
 个人使用构建可启用 `-Pchaos.stockIcons=true`。设备侧先运行 `scripts/extract_stock_sys_icons.py`，
 按固件目录提取控制中心、设置原图，并与原固件解码像素核对。再运行 `scripts/extract_stock_calendar.py` 提取日历背景；App 按日历布局绘制当天星期和日期作为预览，日程继续读取它自己的 `calendar.png`。背景仅用于预览，不自动加入导出包。

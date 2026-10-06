@@ -1,6 +1,7 @@
 package com.chaos.bandpack.data.icon
 
 import com.chaos.bandpack.data.pack.Cipk
+import com.chaos.bandpack.data.DeviceTarget
 
 /** 图标槽位、尺寸及导出资源。 */
 object IconSpec {
@@ -9,10 +10,13 @@ object IconSpec {
     const val MARGIN = (CANVAS - CONTENT) / 2
     const val OUT_BYTES = 12 + CANVAS * CANVAS * 4
     val HEADER = LvglIconCodec.header(CANVAS, CANVAS, 16, 0, CANVAS * 4)
-    enum class Group(val label: String) { DESKTOP("桌面"), CONTROL("控制中心"), SETTINGS("设置") }
-    data class Slot(val stem: String, val label: String, val group: Group = Group.DESKTOP) {
-        val canvas: Int get() = if (group == Group.DESKTOP) CANVAS else 64
-        val content: Int get() = if (group == Group.DESKTOP) CONTENT else 64
+    enum class Group(val label: String) { DESKTOP("桌面"), CONTROL("控制中心"), SETTINGS("设置"), SYSTEM("系统应用") }
+    data class Slot(val stem: String, val label: String, val group: Group = Group.DESKTOP,
+        val width: Int = if (group == Group.DESKTOP) CANVAS else 64,
+        val height: Int = width, val fileStem: String = stem,
+        val device: DeviceTarget = DeviceTarget.TEN_PRO) {
+        val canvas: Int get() = maxOf(width, height)
+        val content: Int get() = if (group == Group.DESKTOP) CONTENT else minOf(width, height)
     }
     val ABSENT_ON_DEVICE = setOf("dealt", "innovation_research")
     val DESKTOP: List<Slot> = listOf(
@@ -78,18 +82,26 @@ object IconSpec {
         Slot("set_wrist", "佩戴方式", Group.SETTINGS),
     )
     val SLOTS = DESKTOP + CONTROL + SETTINGS
-    fun stemOf(s: String): Slot? = SLOTS.firstOrNull { it.stem == s }
-    fun slots(group: Group): List<Slot> = SLOTS.filter { it.group == group }
+    fun all(device: DeviceTarget = DeviceTarget.TEN_PRO): List<Slot> =
+        if (device == DeviceTarget.TEN_PRO) SLOTS else NineIconSpec.SLOTS
+    fun stemOf(s: String, device: DeviceTarget = DeviceTarget.TEN_PRO): Slot? = all(device).firstOrNull { it.stem == s }
+    fun slots(group: Group, device: DeviceTarget = DeviceTarget.TEN_PRO): List<Slot> = all(device).filter { it.group == group }
 
     /** 日历的日期由程序绘制，预览只读取它自己的底图。 */
     fun previewStems(stem: String): List<String> =
-        if (stem == "perpetual_calendar") listOf("calendar_background") else listOf(stem)
+        when (stem) {
+            "perpetual_calendar" -> listOf("calendar_background")
+            "set_safe" -> listOf("set_wrist")
+            "set_wrist" -> listOf("set_safe")
+            else -> listOf(stem)
+        }
 
     /** 精确匹配英文名或分类中文名；未注明分类的重名不匹配。 */
-    fun matchName(base: String): Slot? {
+    fun matchName(base: String, device: DeviceTarget = DeviceTarget.TEN_PRO): Slot? {
         val name = base.trim()
-        stemOf(name.lowercase())?.let { return it }
-        return SLOTS.filter { slot ->
+        all(device).firstOrNull { it.fileStem == name.lowercase() }?.let { return it }
+        stemOf(name.lowercase(), device)?.let { return it }
+        return all(device).filter { slot ->
             slot.label == name || listOf("_", "-", "·", " ").any {
                 name == slot.group.label + it + slot.label
             }
@@ -100,17 +112,17 @@ object IconSpec {
         stems.filterNotNull().groupingBy { it }.eachCount().filterValues { it > 1 }.keys
 
     /** 各应用分别导出，勿扰自动补齐动画画布。 */
-    fun export(picked: Map<String, ByteArray>): List<Cipk.Icon> {
+    fun export(picked: Map<String, ByteArray>, device: DeviceTarget = DeviceTarget.TEN_PRO): List<Cipk.Icon> {
         val normalized = linkedMapOf<String, ByteArray>()
         picked.forEach { (stem, bin) ->
-            val slot = requireNotNull(stemOf(stem)) { "未知图标槽位: $stem" }
+            val slot = requireNotNull(stemOf(stem, device)) { "未知图标槽位: $stem" }
             require(!normalized.containsKey(slot.stem)) { "图标槽位重复: ${slot.label}" }
             val decoded = LvglIconCodec.decode(bin)
-            require(decoded.width == slot.canvas && decoded.height == slot.canvas) { "${slot.label}尺寸不匹配" }
-            normalized[slot.stem] = bin
+            require(decoded.width == slot.width && decoded.height == slot.height) { "${slot.label}尺寸不匹配" }
+            normalized[slot.fileStem] = bin
         }
         val out = normalized.map { Cipk.Icon(it.key, it.value) }.toMutableList()
-        normalized["ctrl_disturb"]?.let { bin ->
+        normalized["ctrl_disturb"]?.takeIf { device == DeviceTarget.TEN_PRO }?.let { bin ->
             val image = LvglIconCodec.decode(bin)
             val canvas = IntArray(160 * 124)
             for (y in 0 until 64) System.arraycopy(image.pixels, y * 64, canvas, (y + 30) * 160 + 48, 64)
