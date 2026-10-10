@@ -58,9 +58,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chaos.bandpack.data.Assets
 import com.chaos.bandpack.data.font.Charset
 import com.chaos.bandpack.data.font.FontSubset
 import com.chaos.bandpack.ui.LocalDeviceTarget
+import com.chaos.bandpack.ui.LocalWorkspace
+import com.chaos.bandpack.ui.component.DeviceSheet
 import com.chaos.bandpack.data.DeviceTarget
 import androidx.compose.material3.Switch
 import com.chaos.bandpack.data.make.FontMake
@@ -122,6 +125,8 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val workspace = LocalWorkspace.current
+    var choosingDevice by remember { mutableStateOf(false) }
 
     // 转发到工作区: 读写本身就是快照状态, 所以下面的代码不必到处写 `draft.`
     var srcBytes by draft::srcBytes
@@ -290,6 +295,8 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
         title = "字体投递表盘",
         kicker = "${device.label} · ${device.firmware}",
         snackbar = snackbar,
+        onDeviceClick = if (workspace != null) ({ choosingDevice = true }) else null,
+        deviceEnabled = !draft.busy && workspace?.busy != true,
     ) { padding, bar ->
         // 整页一次淡入上移。按分节挂会漏掉懒加载的那些节, 见 enterPageT 的注释。
         val pageT = enterPageT()
@@ -303,7 +310,7 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
         ) {
             ContentColumn {
                 if (device == DeviceTarget.NINE_PRO) {
-                    Text("先安装 9 Pro Chaos v2.1；投递包导入到空槽位。仅适配 3.1.187，尚无真机验证。",
+                    Text(Assets.NINE_HINT,
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(Spacing.m))
                 }
@@ -421,6 +428,15 @@ fun FontMakerScreen(draft: FontDraft, autoUri: android.net.Uri? = null, onAutoCo
             }
         }
     }
+
+    DeviceSheet(
+        visible = choosingDevice,
+        current = device,
+        enabled = !draft.busy && workspace?.busy != true,
+        picked = workspace?.icons?.picked?.keys ?: emptySet(),
+        onSelect = { workspace?.selectDevice(it) },
+        onDismiss = { choosingDevice = false },
+    )
 }
 
 /**

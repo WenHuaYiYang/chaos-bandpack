@@ -61,8 +61,8 @@ import androidx.compose.ui.unit.dp
 import com.chaos.bandpack.data.Incoming
 import com.chaos.bandpack.data.displayNameOf
 import com.chaos.bandpack.ui.screen.StudioWorkspace
-import com.chaos.bandpack.ui.component.StudioToolbar
-import com.chaos.bandpack.ui.component.FloatingDeviceSwitcher
+import com.chaos.bandpack.ui.component.ProjectNotice
+import com.chaos.bandpack.ui.component.rememberProjectActions
 import com.chaos.bandpack.ui.screen.FontDraft
 import com.chaos.bandpack.ui.screen.FontMakerScreen
 import com.chaos.bandpack.ui.screen.HomeScreen
@@ -123,6 +123,12 @@ fun ChaosApp() {
         // 系统返回: 不在首页就先回首页(标签之间返回不等于退出)
         BackHandler(enabled = dest != Dest.HOME) { dest = Dest.HOME }
 
+        // 工程动作的宿主挂在这里而不是首页: 从别处分享进来的文件必须在任意标签页都被接住,
+        // 而那时候首页可能根本不在组合里。按钮本身画在首页。
+        val actions = rememberProjectActions(workspace, incomingPack, { incomingPack = null }) { project ->
+            dest = if (project.icons?.images?.isNotEmpty() == true) Dest.ICON else Dest.FONT
+        }
+
         // 每个去处一条色相: 首页 primary、字体 secondary、图标 tertiary、设置中性。
         // 四条制作线一眼分得清, 不用看标题。
         val s = MaterialTheme.colorScheme
@@ -140,18 +146,18 @@ fun ChaosApp() {
             label = "field",
         )
 
-        CompositionLocalProvider(LocalPageTone provides tone, LocalDeviceTarget provides workspace.device) {
+        CompositionLocalProvider(
+            LocalPageTone provides tone, LocalDeviceTarget provides workspace.device,
+            LocalWorkspace provides workspace,
+        ) {
             // 色场画在最外层且吃满整屏: 状态栏与导航条下面也是这个颜色, 不是白边
             Box(Modifier.fillMaxSize().background(field)) {
                 Scaffold(
                     containerColor = Color.Transparent,
-                    topBar = {
-                        StudioToolbar(workspace, incomingPack, { incomingPack = null }) { project ->
-                            dest = if (project.icons?.images?.isNotEmpty() == true) Dest.ICON else Dest.FONT
-                        }
-                    },
                     bottomBar = { NavCapsule(dest) { dest = it } },
                 ) { bar ->
+                    // 顶部没有工具栏了: 工程动作搬到首页内容流里, 状态栏高度由 Scaffold 的
+                    // contentWindowInsets 交回来(没有 topBar 时它自己会留这一档)。
                     Box(Modifier.fillMaxSize().padding(bar)) {
                         // 动效方案在组合期读出来: 转场 lambda 不是 @Composable 作用域, 读不到 MaterialTheme
                         val motion = MaterialTheme.motionScheme
@@ -178,6 +184,7 @@ fun ChaosApp() {
                         ) { d ->
                             when (d) {
                                 Dest.HOME -> HomeScreen(
+                                    actions = actions,
                                     onFont = { dest = Dest.FONT },
                                     onIcon = { dest = Dest.ICON },
                                 )
@@ -194,9 +201,10 @@ fun ChaosApp() {
                                 Dest.SETTINGS -> SettingsScreen()
                             }
                         }
-                        FloatingDeviceSwitcher(workspace)
                     }
                 }
+                // 工程动作的结果与失败: 在哪个标签页都要能收到, 所以宿主在外壳这一层
+                ProjectNotice(actions)
             }
         }
     }

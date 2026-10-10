@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,10 +59,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chaos.bandpack.R
+import com.chaos.bandpack.data.Assets
+import com.chaos.bandpack.data.DeviceTarget
 import com.chaos.bandpack.ui.LocalDeviceTarget
+import com.chaos.bandpack.ui.LocalWorkspace
 import com.chaos.bandpack.data.icon.IconSpec
 import com.chaos.bandpack.data.make.IconMake
 import com.chaos.bandpack.ui.component.ContentColumn
+import com.chaos.bandpack.ui.component.DeviceChoiceRow
+import com.chaos.bandpack.ui.component.ProjectActions
 import com.chaos.bandpack.ui.theme.LocalPageTone
 import com.chaos.bandpack.ui.theme.Spacing
 import com.chaos.bandpack.ui.theme.enterLayer
@@ -72,18 +78,22 @@ import com.chaos.bandpack.ui.theme.ChaosIcon
 import com.chaos.bandpack.ui.theme.chaosIcon
 
 /**
- * 首页只做一件事: 选一条制作线。
+ * 首页只做两件事: 定这一份工程给哪台设备做, 以及选一条制作线。
  *
  * 版式照的是"编辑式开场": 整页一块色场(由外壳按去处算好发下来, 这里不自己挑底色),
  * 页首是**超大字 + 小 kicker + 右侧一片大圆**, 三样不在一条中轴上, 四周留白给足;
- * 往下才是两块制作卡。没有"怎么用"三段话 —— 图已经把话说明白了。
+ * 往下才是设备选择、两块制作卡, 最后一条工程用的动作。没有"怎么用"三段话 —— 图已经把话说明白了。
+ *
+ * 设备与工程动作为什么在首页: 它们说的是"这一份工程", 不是"这一屏"。之前一排小文字
+ * 顶在全 App 最上面, 在哪个标签页都挡在那儿, 既不像这一屏的东西也够不着拇指。
  *
  * 强调只给两处(页首那组, 以及两块卡各自的容器色), 其余全是同色系深浅与排版。
  * 系统栏由外层 ChaosApp 的 Scaffold 统一吃, 这里不再自己加 safeDrawing。
  */
 @Composable
-fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
+fun HomeScreen(actions: ProjectActions, onFont: () -> Unit, onIcon: () -> Unit) {
     val device = LocalDeviceTarget.current
+    val workspace = LocalWorkspace.current
     val tone = LocalPageTone.current
     Column(
         modifier = Modifier
@@ -100,11 +110,23 @@ fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
             // 两块卡 + 流程胶囊共用一个窄宽容器: 横屏/平板上整行拉到 720dp 会让色底空成
             // 一片(视觉区只有一百多 dp 高), 版式就散了 —— 横屏截图里真出现过
             NarrowCentered {
-                // 逐段放行: 左卡 → 右卡 → 流程胶囊
-                val step = rememberEnterStep(3)
+                val step = rememberEnterStep(4)
+                // 设备是这条工程的第一件事, 排在制作卡前面; 没宿主时整节不出现(预览/单测)
+                if (workspace != null) {
+                    SectionKicker("给哪台设备做")
+                    Spacer(Modifier.height(Spacing.m))
+                    DeviceChoiceRow(
+                        current = device,
+                        picked = workspace.icons.picked.keys,
+                        onSelect = workspace::selectDevice,
+                        modifier = Modifier.enterLayer(enterT(step > 0)),
+                    )
+                    Spacer(Modifier.height(Spacing.xxl))
+                }
+                // 逐段放行: 设备卡 → 左卡 → 右卡 → 流程胶囊
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
                     MakerTile(
-                        shown = step > 0,
+                        shown = step > 1,
                         modifier = Modifier.weight(1f),
                         container = MaterialTheme.colorScheme.secondaryContainer,
                         title = "字体投递",
@@ -113,7 +135,7 @@ fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
                         visual = { FontSpecimen(it) },
                     )
                     MakerTile(
-                        shown = step > 1,
+                        shown = step > 2,
                         modifier = Modifier.weight(1f),
                         container = MaterialTheme.colorScheme.tertiaryContainer,
                         title = "图标投递",
@@ -123,8 +145,11 @@ fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
                     )
                 }
                 Spacer(Modifier.height(Spacing.xxl))
-                FlowSteps(shown = step > 2)
+                FlowSteps(shown = step > 3)
             }
+
+            Spacer(Modifier.height(Spacing.xxl))
+            NarrowCentered { ProjectSection(actions, device) }
 
             Text(
                 text = "Chaos · 为小米手环 ${device.label} 制作投递包",
@@ -134,6 +159,125 @@ fun HomeScreen(onFont: () -> Unit, onIcon: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = Spacing.xxxl, bottom = Spacing.xxl),
+            )
+        }
+    }
+}
+
+/**
+ * 首页的分节名。不借用制作页那个带圆徽标的 [SectionHeader]: 首页靠排版分节,
+ * 一处一个小圆徽会把整页切碎, 也压过了页首那组超大字。
+ */
+@Composable
+private fun SectionKicker(text: String) {
+    val tone = LocalPageTone.current
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 2.sp,
+        color = tone.muted,
+    )
+}
+
+/**
+ * 工程动作: 打开文件 / 保存工程, 以及 9 Pro 那一号才有的"取主包"。
+ *
+ * 忙的时候不能只是变灰: 用户点了没反应就会以为卡住, 所以图标位换成加载指示,
+ * 说明行跟着改成"正在处理"。
+ */
+@Composable
+private fun ProjectSection(actions: ProjectActions, device: DeviceTarget) {
+    val step = rememberEnterStep(if (device == DeviceTarget.NINE_PRO) 4 else 3)
+    SectionKicker("工程")
+    Spacer(Modifier.height(Spacing.m))
+    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
+        ActionTile(
+            shown = step > 0,
+            busy = actions.blocked,
+            icon = chaosIcon(ChaosIcon.Download),
+            title = "打开文件",
+            desc = "工程或投递包",
+            onClick = actions.openFile,
+            modifier = Modifier.weight(1f),
+        )
+        ActionTile(
+            shown = step > 1,
+            busy = actions.blocked,
+            icon = chaosIcon(ChaosIcon.Save),
+            title = "保存工程",
+            desc = "两种设备一起存",
+            onClick = actions.saveProject,
+            modifier = Modifier.weight(1f),
+        )
+    }
+    if (device == DeviceTarget.NINE_PRO) {
+        Spacer(Modifier.height(Spacing.m))
+        ActionTile(
+            shown = step > 2,
+            busy = actions.blocked,
+            icon = chaosIcon(ChaosIcon.SectionPack),
+            title = "9 Pro 主包",
+            desc = "装机用的原始容器 ${Assets.NINE_BUILD}",
+            onClick = actions.saveNineInstaller,
+        )
+    }
+}
+
+/** 一个工程动作: 图标方片 + 名字 + 一行说明, 整块可点。 */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ActionTile(
+    shown: Boolean,
+    busy: Boolean,
+    icon: Painter,
+    title: String,
+    desc: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tone = LocalPageTone.current
+    val haptics = LocalHapticFeedback.current
+    val enter = enterT(shown)
+    Row(
+        modifier
+            .enterLayer(enter)
+            .clip(MaterialTheme.shapes.large)
+            .background(tone.card)
+            .clickable(enabled = !busy, onClickLabel = title) {
+                haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+                onClick()
+            }
+            .padding(Spacing.l),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+    ) {
+        // 方片而不是圆: M3 Expressive 的 FAB 与控件一律收成圆角方块, 首页这里跟着同一档
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(tone.capsule),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (busy) {
+                LoadingIndicator(modifier = Modifier.size(20.dp), color = tone.onField)
+            } else {
+                Icon(icon, contentDescription = null, tint = tone.onField, modifier = Modifier.size(22.dp))
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = tone.onField,
+            )
+            Text(
+                if (busy) "正在处理…" else desc,
+                style = MaterialTheme.typography.labelSmall,
+                color = tone.muted,
+                maxLines = 1,
             )
         }
     }

@@ -43,7 +43,7 @@ fun deviceSource(vararg rel: String): File? {
  * 系统原图标: 从固件资源包解出来那批图(手环桌面上那些应用原本长什么样),
  * 图标页的空槽位与首页的预览都指望它 —— 默认带上。
  *
- * 素材**不进本仓库**: 构建时从设备侧仓库的 `sys_icons/stock` 同步进来, 也就是说只有
+ * 素材**不进本仓库**: 构建时从设备侧仓库的原图目录(`assets/firmware_icons/stock`)同步进来, 也就是说只有
  * 手上有固件资源、自己解过的人打出来的包才有这批图。没有那份素材的构建(公开仓库 / CI)
  * 这里必然是空目录, 界面自动退成"未内置" —— 这批图不会由本仓库再分发出去, 只作本地对照。
  * 想显式排除时用 `-Pchaos.stockIcons=false`。来源与授权限制见 `THIRD_PARTY_NOTICES.md`。
@@ -65,8 +65,15 @@ val packSources = linkedMapOf(
     "font_pack.lua" to deviceSource("installer", "font_pack.lua"),
     "icon_pack.lua" to deviceSource("installer", "icon_pack.lua"),
 )
-val stockSource = listOf(File(chaosRepoDir, "../sys_icons/stock"), File(chaosRepoDir, "sys_icons/stock"))
-    .map { it.canonicalFile }.firstOrNull { it.isDirectory }
+val stockSource = listOf(
+    // 原图素材在设备侧仓库的 `assets/firmware_icons/stock`(更早叫 `sys_icons/stock`)。
+    // 两种仓库形状都认: `-Pchaos.repo` 既可能指设备侧工程根(里面还有一层 Chaos-Module),
+    // 也可能直接指已发布的模块仓库根 —— 只铺一条路径的话, 换一种写法就悄悄丢掉系统原图。
+    File(chaosRepoDir, "assets/firmware_icons/stock"),
+    File(chaosRepoDir, "../assets/firmware_icons/stock"),
+    File(chaosRepoDir, "sys_icons/stock"),
+    File(chaosRepoDir, "../sys_icons/stock"),
+).map { it.canonicalFile }.firstOrNull { it.isDirectory }
 
 val nineRepoDir = file((findProperty("chaos.n67.repo") as String?)
     ?: File(chaosRepoDir, "build/9pro-port-v2.1/chaos-9pro").path)
@@ -176,8 +183,11 @@ val syncLegalAssets by tasks.registering(Sync::class) {
         }
         val nineInstallerHash = MessageDigest.getInstance("SHA-256").digest(nineSources.getValue("installer.bin").readBytes())
             .joinToString("") { "%02x".format(it.toInt() and 255) }
-        if (nineInstallerHash != "fc6abe218af0535e02b93c40d16ade91ed3defe3801deec7d8cb72138207d806") {
-            throw GradleException("9 Pro 主包与已核对的 v2.1 原始产物不一致")
+        // 这一号主包 = 设备侧那条链跑完它自带四套测试(含删除链的 ARM mock 用例)后留下的产物。
+        // 换版要同时改这里的哈希、`Assets.NINE_BUILD` 与移植源码本身, 三者不同步就会出
+        // "名字与内容对不上"的主包。
+        if (nineInstallerHash != "6585061e780159e43e4a2e59c9fe0f32604b9e5952ad60067801e3fd0fd95e53") {
+            throw GradleException("9 Pro 主包与已核对的 v2.2 产物不一致")
         }
         val importerHash = MessageDigest.getInstance("SHA-256").digest(nineSources.getValue("importer.lua.in").readBytes())
             .joinToString("") { "%02x".format(it.toInt() and 255) }

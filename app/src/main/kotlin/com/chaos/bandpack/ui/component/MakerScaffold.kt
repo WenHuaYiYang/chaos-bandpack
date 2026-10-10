@@ -95,6 +95,9 @@ fun MakerScaffold(
     kicker: String,
     snackbar: SnackbarHostState = remember { SnackbarHostState() },
     actions: @Composable () -> Unit = {},
+    /** 非空时 kicker 那行变成可点的设备芯片; 传 null 就是普通说明文字 */
+    onDeviceClick: (() -> Unit)? = null,
+    deviceEnabled: Boolean = true,
     content: @Composable (PaddingValues, TopAppBarScrollBehavior) -> Unit,
 ) {
     val tone = LocalPageTone.current
@@ -107,14 +110,18 @@ fun MakerScaffold(
             MediumTopAppBar(
                 title = {
                     Column {
-                        Text(
-                            kicker,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Medium,
-                            letterSpacing = 2.5.sp,
-                            color = tone.muted,
-                        )
-                        Spacer(Modifier.height(Spacing.xs))
+                        if (onDeviceClick != null) {
+                            DeviceKickerChip(kicker, deviceEnabled, onDeviceClick)
+                        } else {
+                            Text(
+                                kicker,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Medium,
+                                letterSpacing = 2.5.sp,
+                                color = tone.muted,
+                            )
+                            Spacer(Modifier.height(Spacing.xs))
+                        }
                         Text(
                             title,
                             style = MaterialTheme.typography.headlineLarge,

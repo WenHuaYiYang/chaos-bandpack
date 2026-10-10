@@ -33,7 +33,8 @@ class PackWriterTest {
 
     /** 设备侧工程根旁边那些产物(PC 打的包、图标素材目录): chaos.repo 指向工程根或其上一层都能找到 */
     private fun artifact(name: String): File? =
-        listOf(File(repo, name), File(repo.parentFile, name)).firstOrNull { it.exists() }
+        listOf(File(repo, "dist/$name"), File(repo, name), File(repo.parentFile, name))
+            .firstOrNull { it.exists() }
 
     /** 真实素材(ko / 应用图标 / 两个投递 Lua); 缺任何一样就返回 null, 对拍组据此失败 */
     private fun realAssets(): PackAssets? {

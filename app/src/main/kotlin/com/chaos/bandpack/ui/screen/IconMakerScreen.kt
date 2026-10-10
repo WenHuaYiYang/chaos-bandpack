@@ -65,10 +65,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.chaos.bandpack.data.Assets
 import com.chaos.bandpack.data.displayNameOf
 import com.chaos.bandpack.data.icon.IconConvert
 import com.chaos.bandpack.data.DeviceTarget
 import com.chaos.bandpack.ui.LocalDeviceTarget
+import com.chaos.bandpack.ui.LocalWorkspace
+import com.chaos.bandpack.ui.component.DeviceSheet
 import com.chaos.bandpack.data.icon.PortableIcons
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -109,7 +112,8 @@ import com.chaos.bandpack.ui.theme.chaosIcon
  * 规则(与手环侧一致): **空槽不进包** —— 手环上继续用系统原图标, 界面上把原图标调暗显示当参照。
  * 取向: 少文字多控件 —— 顶部用"已选进度条 + 两格图例"说明状态,
  * 清空走图标按钮, 产出统计走 [StatChip]; 可点元素的标签一律保留。
- * 交互: 点槽位选图, 已选格右上角小叉清空; 主动作是右下角的扩展 FAB(底栏给了导航栏);
+ * 交互: 点槽位选图, 已选格右上角小叉清空; 主动作是内容流末尾那条填充胶囊 [ExportPill]
+ * (不浮在角上, 免得滚动时压住格子标签); 顶栏那行设备说明本身就是切换入口;
  * 瞬时反馈走 Snackbar。工作区 [IconDraft] 由外壳记住, 切走再切回来已选的图还在。
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
@@ -120,6 +124,8 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val workspace = LocalWorkspace.current
+    var choosingDevice by remember { mutableStateOf(false) }
     val width = LocalWidthClass.current
 
     // 转发到工作区: 这一页是底部导航栏的同级标签页, 切走再回来不能丢已选的图
@@ -299,6 +305,8 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
         title = "图标投递表盘",
         kicker = "${device.label} · ${device.firmware}",
         snackbar = snackbar,
+        onDeviceClick = if (workspace != null) ({ choosingDevice = true }) else null,
+        deviceEnabled = !busy,
     ) { padding, bar ->
         // 整页一次淡入上移。按分节挂会漏掉懒加载的那些节, 见 enterPageT 的注释。
         val pageT = enterPageT()
@@ -491,7 +499,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(Spacing.m))
                     }
-                    if (device == DeviceTarget.NINE_PRO) Text("先安装 9 Pro Chaos v2.1；投递包导入到空槽位。仅适配 3.1.187，尚无真机验证。",
+                    if (device == DeviceTarget.NINE_PRO) Text(Assets.NINE_HINT,
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val p = pack
                     if (p == null) {
@@ -548,6 +556,15 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
             }
         }
     }
+
+    DeviceSheet(
+        visible = choosingDevice,
+        current = device,
+        enabled = !busy,
+        picked = picked.keys,
+        onSelect = { workspace?.selectDevice(it) },
+        onDismiss = { choosingDevice = false },
+    )
 }
 
 /**

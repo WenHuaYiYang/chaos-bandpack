@@ -15,6 +15,15 @@ enum class WidthClass { COMPACT, MEDIUM, EXPANDED }
 val LocalWidthClass = staticCompositionLocalOf { WidthClass.COMPACT }
 val LocalDeviceTarget = staticCompositionLocalOf { DeviceTarget.TEN_PRO }
 
+/**
+ * 工作区句柄: 设备切换与"这一份工程"的动作都要用它。
+ *
+ * 只给外壳与首页/制作页, 因为这三处才需要改工程; 数据页仍然读 [LocalDeviceTarget]。
+ * 可空而不是造一个假工作区: 组件在没有宿主的场合(预览/单测)应当直接退成"不可切换",
+ * 而不是拿一份状态全空的草稿去点。
+ */
+val LocalWorkspace = staticCompositionLocalOf<com.chaos.bandpack.ui.screen.StudioWorkspace?> { null }
+
 /** 图标网格列数: 紧凑 4 / 中等 6 / 宽屏 8 */
 val WidthClass.gridColumns: Int
     get() = when (this) {

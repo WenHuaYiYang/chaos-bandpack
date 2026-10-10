@@ -13,6 +13,14 @@ object Assets {
 
     private const val DIR = "pack"
 
+    /**
+     * 9 Pro 移植版这一号的版本号。设备侧产物换了就得跟着改: 导出文件名与界面提示
+     * 都取这里, 之前三处各写一遍 v2.1, 换版时漏了一处就会让用户拿到名字对不上的主包。
+     */
+    const val NINE_BUILD = "v2.2"
+    val NINE_INSTALLER_NAME = "Chaos-9Pro-3.1.187-$NINE_BUILD.bin"
+    val NINE_HINT = "先安装 9 Pro Chaos $NINE_BUILD；投递包导入到空槽位。仅适配 3.1.187，尚无真机验证。"
+
     fun nineImporter(context: Context): String = context.assets.open("pack_n67/importer.lua.in").use { it.readBytes().toString(Charsets.UTF_8) }
     fun nineInstaller(context: Context): ByteArray = context.assets.open("pack_n67/installer.bin").use { it.readBytes() }
 
