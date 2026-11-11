@@ -9,3 +9,6 @@ captures/
 # 自签发布密钥与口令(丢了下次就没法覆盖安装; 但绝不能进仓库)
 keystore/
 keystore.properties
+__pycache__/
+*.py[cod]
+.venv/
