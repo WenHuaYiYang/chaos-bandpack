@@ -13,7 +13,7 @@ plugins {
 // ===== 设备侧仓库 =====
 //
 // 这个 App 只做"打包", 打包要的三样东西都在设备侧: 内核模块 chaos_sup.ko、应用图标
-// chaos_icon.bin、两个投递 Lua。它们**不随本仓库发布**(前两个是设备侧构建出来的产物),
+// chaos_icon.bin、字体投递 Lua 来自设备侧；图标投递 Lua 由本 App 的源码维护。前述设备侧二进制不随仓库发布,
 // 所以构建前要先准备一份设备侧仓库, 位置按下面的顺序找:
 //
 //   1. -Pchaos.repo=<路径>
@@ -63,7 +63,7 @@ val packSources = linkedMapOf(
     "chaos_sup.ko" to deviceSource("supervisor", "chaos_sup.ko"),
     "chaos_icon.bin" to deviceSource("chaos_icon.bin"),
     "font_pack.lua" to deviceSource("installer", "font_pack.lua"),
-    "icon_pack.lua" to deviceSource("installer", "icon_pack.lua"),
+    "icon_pack.lua" to rootProject.file("app/src/main/pack/icon_pack.lua"),
 )
 val stockSource = listOf(
     // 原图素材在设备侧仓库的 `assets/firmware_icons/stock`(更早叫 `sys_icons/stock`)。
@@ -216,8 +216,8 @@ android {
         applicationId = "com.chaos.bandpack"
         minSdk = 26          // 通知 + Compose + SAF 都够; 再低没有实际用户
         targetSdk = 36       // Android 16
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "1.4.0"
     }
 
     buildFeatures {

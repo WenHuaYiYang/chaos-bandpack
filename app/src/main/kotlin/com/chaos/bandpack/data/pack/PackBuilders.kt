@@ -1,19 +1,6 @@
 package com.chaos.bandpack.data.pack
 
-/**
- * 两种投递包的组装(与 PC 侧 `build_font_pack.py` / `build_icon_pack.py` 同口径)。
- *
- * 槽位语义必须与主包一致 —— 载荷排第 4 槽, 前三个槽是 lua / ko / 图标:
- *   字体包: _lua/fontpack/{main.lua, chaos_sup.ko, chaos_icon.bin, font.ttf}
- *   图标包: _lua/iconpack/{main.lua, chaos_sup.ko, chaos_icon.bin, pack.bin}
- * 真机踩过的坑: 槽 3/4 放说明文本 => 表盘在列表里能看到、切过去全黑、脚本一行不执行。
- *
- * 投递 Lua 里的占位符在**打包时**替换(表盘容器里的脚本读不到自己的显示名),
- * 规则与 PC 侧一致: 每个占位符必须恰好出现一次, 少了说明脚本被改过而替换没跟上
- * (替换会静默失效), 多了说明有地方会漏改 —— 两种都当错误打死, 不猜。
- *
- * 预览块由调用方按包生成([PreviewFactory]), **不是可选项**: 表盘列表里那张图就是它。
- */
+/** Font deliveries retain four legacy entries; icon deliveries use the current two-resource p67 container. */
 object FontPackBuilder {
 
     const val LABEL_BYTES = 12
@@ -82,6 +69,10 @@ object IconPackBuilder {
     const val SHORT_BYTES = 12
     const val PH_NAME = "__PACK_NAME__"
     const val PH_TITLE = "__PACK_TITLE__"
+    const val ROOT = "_lua/xiaomi-band-10-pro/"
+    const val CONTAINER_VERSION = 0x00010107
+    const val DISPLAY_BYTES = 60
+    fun validShort(name: String): Boolean = Regex("[A-Za-z0-9_-]{1,12}").matches(name)
 
     class Inputs(
         /** 包短名(清单里的名字, 可打印 ASCII, <= 12 字节) */
@@ -95,29 +86,31 @@ object IconPackBuilder {
 
     class Result(val bytes: ByteArray, val pkgName: String, val packName: String, val iconCount: Int)
 
-    fun build(a: PackAssets, inputs: Inputs, preview: ByteArray): Result {
+    fun build(a: PackAssets, inputs: Inputs, preview: ByteArray): Result = build(a.iconLua, inputs, preview)
+
+    fun build(template: String, inputs: Inputs, preview: ByteArray): Result {
         val sb = inputs.short.toByteArray(Charsets.US_ASCII)
         if (sb.isEmpty() || sb.size > SHORT_BYTES) {
             throw ShellWriter.PackError("图标包短名要在 1..$SHORT_BYTES 字节之间")
         }
-        if (inputs.short.any { it.code <= 0x20 || it.code >= 0x7F }) {
-            throw ShellWriter.PackError("图标包短名只能是可打印 ASCII: 「${inputs.short}」")
+        if (!validShort(inputs.short)) {
+            throw ShellWriter.PackError("图标包短名只能用 1–12 个 ASCII 字母、数字、下划线或连字符")
         }
+        if (inputs.packName.toByteArray(Charsets.UTF_8).size > DISPLAY_BYTES) throw ShellWriter.PackError("p67 表盘名称超过 60 字节")
 
-        val cipk = Cipk.build(inputs.icons)
-        val lua = patchLua(a.iconLua, mapOf(PH_NAME to inputs.short, PH_TITLE to inputs.title))
+        val files = com.chaos.bandpack.data.icon.AnimatedIcons.payload(inputs.icons)
+        val cipk = Cipk.build(files)
+        val lua = patchLua(template, mapOf(PH_NAME to inputs.short, PH_TITLE to inputs.title))
 
         val entries = listOf(
-            ShellBuilder.Entry("_lua/iconpack/main.lua", lua.toByteArray(Charsets.UTF_8)),
-            ShellBuilder.Entry("_lua/iconpack/chaos_sup.ko", a.ko),
-            ShellBuilder.Entry("_lua/iconpack/chaos_icon.bin", a.iconBin),
-            ShellBuilder.Entry("_lua/iconpack/pack.bin", cipk),
+            ShellBuilder.Entry(ROOT + "main.lua", lua.toByteArray(Charsets.UTF_8)),
+            ShellBuilder.Entry(ROOT + "pack.bin", cipk),
         )
         val pkg = inputs.pkgName?.also { ShellWriter.checkPkg(it) } ?: ShellWriter.pkgFor(cipk)
-        val out = ShellBuilder.build(entries, pkg, inputs.packName, preview)
+        val out = ShellBuilder.build(entries, pkg, inputs.packName, preview, deviceCode = CONTAINER_VERSION)
         verifyBuilt(out, pkg, inputs.packName, entries)
 
-        // 回读: 第 1 槽的短名替换干净, 第 4 槽的 CIPK 逐字节等于本次生成
+        // Read the two-resource p67 container back before offering it for export.
         val (luaPath, luaData) = ShellWriter.readEntry(out, 1)
         if (!luaPath.endsWith("main.lua")) throw ShellWriter.PackError("第 1 槽不是投递 Lua")
         val txt = String(luaData, Charsets.UTF_8)
@@ -125,12 +118,12 @@ object IconPackBuilder {
             if (ph in txt) throw ShellWriter.PackError("投递 Lua 里还留着 $ph 占位符")
         }
         if (inputs.short !in txt) throw ShellWriter.PackError("投递 Lua 里没找到短名「${inputs.short}」")
-        val (packPath, packData) = ShellWriter.readEntry(out, 4)
-        if (!packPath.endsWith("pack.bin")) throw ShellWriter.PackError("第 4 槽不是 CIPK: $packPath")
+        val (packPath, packData) = ShellWriter.readEntry(out, 2)
+        if (packPath != ROOT + "pack.bin") throw ShellWriter.PackError("第 2 槽不是 CIPK: $packPath")
         if (!packData.contentEquals(cipk)) throw ShellWriter.PackError("pack.bin 与本次生成的容器不一致")
         val back = Cipk.parse(packData)
-        if (back.size != inputs.icons.size) throw ShellWriter.PackError("CIPK 解回来张数不对")
-        inputs.icons.forEachIndexed { i, ic ->
+        if (back.size != files.size) throw ShellWriter.PackError("CIPK 解回来张数不对")
+        files.forEachIndexed { i, ic ->
             val (name, data) = back[i]
             if (name != ic.fileName) throw ShellWriter.PackError("第 ${i + 1} 张名字对不上: $name")
             if (!data.contentEquals(ic.data)) throw ShellWriter.PackError("$name 内容不一致")
@@ -200,7 +193,7 @@ internal fun luaQuote(s: String): String {
     for (ch in s) {
         when {
             ch == '"' || ch == '\\' -> sb.append('\\').append(ch)
-            ch.code < 0x20 -> sb.append("\\%d".format(ch.code))
+            ch.code < 0x20 -> sb.append("\\%03d".format(ch.code))
             else -> sb.append(ch)
         }
     }

@@ -11,7 +11,7 @@ import java.io.ByteArrayOutputStream
  *
  * 布局(逐字段对过 PC 侧生成器与多个来源不同的容器):
  * ```
- * 0x00  u32 魔数 0x1234A55A     0x04 u32 设备码(10 Pro = 0x10000)
+ * 0x00  u32 魔数 0x1234A55A     0x04 u32 容器版本(原包 0x10000，p67 支持 1.x)
  * 0x10  u32 0x800               0x14 u32 0x10000    0x18 0    0x1C 主题数 = 1
  * 0x20  u32 记录表结束地址( = 预览块起点)              0x24 0
  * 0x28  12 字节包名 pkgName(身份键, 撞号 = 同一个包)
@@ -204,8 +204,8 @@ object ShellBuilder {
         if (raw.size > 32_000_000) throw ShellWriter.PackError("容器超过 32 MB")
         if (raw.size < REC_OFF + 16 * 3) throw ShellWriter.PackError("容器太短")
         if (ShellWriter.readU32(raw, 0) != MAGIC) throw ShellWriter.PackError("容器魔数不符")
-        if (ShellWriter.readU32(raw, 4) != DEVICE_CODE) {
-            throw ShellWriter.PackError("设备码不是 10 Pro(0x10000)")
+        if (ShellWriter.readU32(raw, 4) ushr 16 != 1) {
+            throw ShellWriter.PackError("不是支持的 p67 1.x 容器版本")
         }
         val n = ShellWriter.readU32(raw, FILE_CNT_OFF)
         if (n < 1 || n > 255) throw ShellWriter.PackError("文件条数非法: $n")

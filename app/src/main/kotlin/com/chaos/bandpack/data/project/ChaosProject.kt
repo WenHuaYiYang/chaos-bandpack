@@ -1,7 +1,7 @@
 package com.chaos.bandpack.data.project
 
 import com.chaos.bandpack.data.DeviceTarget
-import com.chaos.bandpack.data.icon.LvglIconCodec
+import com.chaos.bandpack.data.icon.AnimatedIcons
 import com.chaos.bandpack.data.font.Sfnt
 import kotlinx.serialization.json.*
 import java.io.ByteArrayOutputStream
@@ -20,8 +20,8 @@ data class ChaosProject(val device: DeviceTarget, val icons: IconProject? = null
 object ProjectCodec {
     const val EXTENSION = "chaosproj"
     const val MAX_BYTES = 32_000_000
-    private const val MAX_ENTRIES = 132
-    private val key = Regex("[A-Za-z0-9_]{1,40}")
+    private const val MAX_ENTRIES = 258
+    private val key = Regex("[A-Za-z0-9_]{1,60}")
     private fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
 
     private fun info(value: PackInfo) = buildJsonObject {
@@ -33,13 +33,14 @@ object ProjectCodec {
         require(project.icons != null || project.font != null) { "工程没有素材" }
         val files = linkedMapOf<String, ByteArray>()
         val manifest = buildJsonObject {
-            put("format", "chaos-studio-project"); put("version", 1); put("device", project.device.id)
+            put("format", "chaos-studio-project"); put("version", 2); put("device", project.device.id)
             project.icons?.let { icons ->
+                require(icons.images.size <= 256) { "工程图标素材超过 256 个文件" }
+                AnimatedIcons.validateProject(icons.images)
                 put("icons", buildJsonObject {
                     put("info", info(icons.info))
                     put("images", buildJsonArray { icons.images.toSortedMap().forEach { (stem, bytes) ->
                         require(key.matches(stem)) { "素材名不合法：$stem" }
-                        LvglIconCodec.decode(bytes)
                         val path = "images/$stem.bin"; files[path] = bytes
                         add(buildJsonObject { put("key", stem); put("path", path); put("sha256", hash(bytes)) })
                     } })
@@ -74,7 +75,7 @@ object ProjectCodec {
             while (true) {
                 val entry = zip.nextEntry ?: break
                 require(!entry.isDirectory && files.size < MAX_ENTRIES && entry.name !in files) { "工程条目重复或过多" }
-                require(entry.name == "project.json" || entry.name == "font/source.ttf" || Regex("images/[A-Za-z0-9_]{1,40}\\.bin").matches(entry.name)) { "工程路径不合法" }
+                require(entry.name == "project.json" || entry.name == "font/source.ttf" || Regex("images/[A-Za-z0-9_]{1,60}\\.bin").matches(entry.name)) { "工程路径不合法" }
                 val out = ByteArrayOutputStream()
                 val buffer = ByteArray(8192)
                 while (true) {
@@ -87,7 +88,7 @@ object ProjectCodec {
             }
         }
         val root = Json.parseToJsonElement(files.remove("project.json")?.toString(Charsets.UTF_8) ?: error("缺少工程清单")).jsonObject
-        require(root["format"]?.jsonPrimitive?.content == "chaos-studio-project" && root["version"]?.jsonPrimitive?.int == 1) { "工程格式或版本不支持" }
+        require(root["format"]?.jsonPrimitive?.content == "chaos-studio-project" && root["version"]?.jsonPrimitive?.int in 1..2) { "工程格式或版本不支持" }
         val device = DeviceTarget.fromId(root.string("device"))
         fun payload(row: JsonObject): ByteArray {
             val path = row.string("path")
@@ -98,12 +99,13 @@ object ProjectCodec {
         val icons = root["icons"]?.jsonObject?.let { row ->
             val images = linkedMapOf<String, ByteArray>()
             val list = row["images"]!!.jsonArray
-            require(list.size <= 128)
+            require(list.size <= 256)
             for (element in list) {
                 val item = element.jsonObject; val stem = item.string("key")
                 require(key.matches(stem) && stem !in images && item.string("path") == "images/$stem.bin") { "图标槽位重复或不合法" }
-                images[stem] = payload(item).also { LvglIconCodec.decode(it) }
+                images[stem] = payload(item)
             }
+            AnimatedIcons.validateProject(images)
             IconProject(readInfo(row["info"]!!.jsonObject), images)
         }
         val font = root["font"]?.jsonObject?.let { row ->

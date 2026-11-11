@@ -5,6 +5,7 @@ import com.chaos.bandpack.data.font.Sfnt
 import com.chaos.bandpack.data.icon.IconSpec
 import com.chaos.bandpack.data.icon.NineIconSpec
 import com.chaos.bandpack.data.icon.LvglIconCodec
+import com.chaos.bandpack.data.icon.AnimatedIcons
 import com.chaos.bandpack.data.pack.*
 import java.io.ByteArrayOutputStream
 
@@ -18,14 +19,19 @@ object PackBinImport {
         val pkg = ten?.pkg ?: nine!!.pkg
         val display = ten?.displayName ?: nine!!.displayName
         ShellWriter.checkPkg(pkg)
-        val cipk = parsed.singleOrNull { it.first == "_lua/iconpack/pack.bin" }
+        val roots = listOf("_lua/iconpack/", "_lua/xiaomi-band-10-pro/")
+        val packs = parsed.filter { entry -> roots.any { entry.first == it + "pack.bin" } }
+        require(packs.size <= 1) { "容器包含重复的图标载荷" }
+        val cipk = packs.singleOrNull()
         if (cipk != null) {
-            val lua = parsed.singleOrNull { it.first == "_lua/iconpack/main.lua" }?.second?.toString(Charsets.UTF_8)
+            val base = cipk.first.removeSuffix("pack.bin")
+            val lua = parsed.singleOrNull { it.first == base + "main.lua" }?.second?.toString(Charsets.UTF_8)
                 ?: error("缺少图标投递清单")
             val info = PackInfo(localString(lua, "PACK_NAME") ?: "MyIcons", display, localString(lua, "PACK_TITLE") ?: "图标投递", pkg)
-            val images = Cipk.parse(cipk.second).associate { it.first.removeSuffix(".bin") to it.second }
+            val files = Cipk.parse(cipk.second).map { Cipk.Icon(it.first.removeSuffix(".bin"), it.second) }
+            AnimatedIcons.validateFiles(files)
+            val images = files.filter { it.stem != "animations" }.associate { it.stem to it.data }
                 .toMutableMap()
-            images.values.forEach { LvglIconCodec.decode(it) }
             if ("ctrl_disturb" !in images) images["ctrl_dnd"]?.let { animation ->
                 val image = LvglIconCodec.decode(animation)
                 require(image.width == 160 && image.height == 124) { "勿扰动画尺寸不支持" }

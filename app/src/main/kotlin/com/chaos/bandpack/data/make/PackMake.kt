@@ -18,6 +18,8 @@ object PackMake {
 
     @Volatile
     private var cached: PackAssets? = null
+    @Volatile
+    private var cachedIconLua: String? = null
 
     fun assets(ctx: Context): PackAssets =
         cached ?: synchronized(this) {
@@ -31,7 +33,9 @@ object PackMake {
     fun iconPack(ctx: Context, inputs: IconPackBuilder.Inputs, device: DeviceTarget = DeviceTarget.TEN_PRO): IconPackBuilder.Result =
         if (device == DeviceTarget.NINE_PRO) NinePackBuilder.icons(Assets.nineImporter(ctx), inputs,
             PreviewFactory.iconBlob(ctx.assets, inputs.title, inputs.short)) else IconPackBuilder.build(
-            assets(ctx), inputs,
+            cachedIconLua ?: synchronized(this) {
+                cachedIconLua ?: Assets.iconLua(ctx.applicationContext).also { cachedIconLua = it }
+            }, inputs,
             PreviewFactory.iconBlob(ctx.assets, inputs.title, inputs.short),
         )
 

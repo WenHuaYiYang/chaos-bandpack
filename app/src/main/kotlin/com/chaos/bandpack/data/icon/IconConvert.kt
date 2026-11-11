@@ -10,18 +10,9 @@ import kotlin.math.sin
 import com.chaos.bandpack.data.DeviceTarget
 
 /**
- * 任意图片 -> 手环桌面图标（112x112，BGRA，50188 字节）。
- *
- * 几何完全照 PC 侧 `scripts/gen_delta_icons.py`，两端口径必须一致：
- * 外接方框按 alpha > [ALPHA_HIT] 取，方框内 alpha > [ALPHA_PLATE] 的比例就是"底板覆盖率"；
- * 覆盖率过低说明是透明底裸图形（贴上桌面会比系统图标小一圈），直接拒绝并说明原因。
- * 配平方式是**外沿齐平**——所有底板的外接方框统一缩到内容框 [IconSpec.CONTENT]，
- * 不是面积相等。这是看过对照图后定的，也符合"只等比缩放、不补底不切圆角"的纪律。
- *
- * 与 PC 侧唯一的有意差异：缩放走**预乘 alpha**（先乘 alpha 再插值，最后除回来）。
- * PIL 是四个通道各自独立插值的，透明像素的 RGB 会渗进边缘形成暗边；预乘能消掉这个
- * 暗边。两者在本仓库那批带底板的图上差别只在圆角处几个像素，但用户随手选的图
- * （带阴影、带羽化）差别就明显了，所以这里选更正确的那个。
+ * Native icon conversion. New p67 desktop images keep the complete source canvas and alpha
+ * in a centered 96x96 BGRA image. System images keep their slot geometry; the original
+ * 9 Pro 100x100 conversion retains its content/plate checks. Scaling uses premultiplied alpha.
  */
 object IconConvert {
 
@@ -57,6 +48,12 @@ object IconConvert {
      * 否则缩放这一步的内存与耗时都不划算。
      */
     fun convert(src: IntArray, w: Int, h: Int, slot: IconSpec.Slot = IconSpec.DESKTOP.first()): Pair<ByteArray, Report> {
+        require(slot.group != IconSpec.Group.NATIVE) { "此系统资源请导入已转换的 BIN，原尺寸会被保留" }
+        if (slot.group == IconSpec.Group.DESKTOP && slot.device == DeviceTarget.TEN_PRO) {
+            val pixels = fitCanvas(src, w, h, Dgf1.SIDE)
+            val coverage = pixels.count { it ushr 24 > ALPHA_PLATE }.toDouble() / pixels.size
+            return LvglIconCodec.bgra(pixels, Dgf1.SIDE, Dgf1.SIDE) to Report(coverage, maxOf(w, h), Dgf1.SIDE)
+        }
         if (slot.group != IconSpec.Group.DESKTOP) return convertSystem(src, w, h, slot)
         require(w > 0 && h > 0 && src.size >= w * h) { "像素数组与尺寸不匹配" }
 
@@ -138,6 +135,13 @@ object IconConvert {
 
     internal fun resizeSquare(pixels: IntArray, side: Int, to: Int): IntArray = scaleBox(pixels, side, 0, 0, side, to)
 
+    /** Keep the complete logical canvas and its transparency, centering non-square inputs. */
+    fun fitCanvas(pixels: IntArray, width: Int, height: Int, to: Int): IntArray {
+        require(width > 0 && height > 0 && width.toLong() * height <= pixels.size && to > 0) { "像素数组与尺寸不匹配" }
+        val side = maxOf(width, height)
+        return scaleBox(pixels, width, -(side - width) / 2, -(side - height) / 2, side, to)
+    }
+
     // ===== 缩放 =====
 
     /**
@@ -150,7 +154,10 @@ object IconConvert {
         if (side == dst) {
             val out = IntArray(dst * dst)
             for (y in 0 until dst) {
-                System.arraycopy(src, (by + y) * srcW + bx, out, y * dst, dst)
+                for (x in 0 until dst) {
+                    val sx = bx + x; val sy = by + y
+                    if (sx in 0 until srcW && sy in 0 until src.size / srcW) out[y * dst + x] = src[sy * srcW + sx]
+                }
             }
             return out
         }
@@ -170,7 +177,8 @@ object IconConvert {
                 for (j in 0 until k.n) {
                     val w = k.wgt[base + j].toDouble()
                     if (w == 0.0) continue
-                    val p = src[row + k.idx[base + j]]
+                    val sx = bx + k.idx[base + j]
+                    val p = if (sx in 0 until srcW && by + y in 0 until src.size / srcW) src[row + k.idx[base + j]] else 0
                     val pa = (p ushr 24) and 0xFF
                     val f = w * pa
                     r += ((p ushr 16) and 0xFF) * f
