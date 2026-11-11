@@ -90,7 +90,7 @@ fun StudioToolbar(workspace: StudioWorkspace, incoming: android.net.Uri?, onCons
             }) { Text("保存工程") }
             if (workspace.device == DeviceTarget.NINE_PRO) TextButton(enabled = !blocked, onClick = {
                 runCatching {
-                    val name = "Chaos-9Pro-3.1.187-v2.1.bin"
+                    val name = Assets.NINE_INSTALLER_NAME
                     ExportPending.put(Assets.nineInstaller(ctx), name); saver.launch(name)
                 }
                     .onFailure { notice = "主包读取失败：${it.message}" }
