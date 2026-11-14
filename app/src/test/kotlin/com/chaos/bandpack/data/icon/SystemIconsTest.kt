@@ -25,13 +25,13 @@ class SystemIconsTest {
         assertTrue(visible.minOf { it % 64 } < 2 && visible.maxOf { it % 64 } > 61)
         assertTrue(visible.minOf { it / 64 } >= 18 && visible.maxOf { it / 64 } <= 45)
         val thin = IntArray(64 * 64).also { for (i in 0..63) it[i * 64 + i] = -1 }
-        assertTrue(runCatching { IconConvert.convert(thin, 64, 64) }.exceptionOrNull() is IconConvert.NoPlate)
+        assertEquals(96, LvglIconCodec.decode(IconConvert.convert(thin, 64, 64).first).width)
         assertEquals(64, LvglIconCodec.decode(IconConvert.convert(thin, 64, 64, slot).first).width)
     }
     @Test fun `勿扰一槽输出两种资源且清空后全部缺席`() {
         val bin = IconConvert.convert(glyph(), 96, 48, IconSpec.stemOf("ctrl_disturb")!!).first
         val icons = IconSpec.export(mapOf("ctrl_disturb" to bin))
-        assertEquals(setOf("ctrl_disturb", "ctrl_dnd"), icons.map { it.stem }.toSet())
+        assertEquals(setOf("ctrl_disturb", "ctrl_dnd", "animations"), icons.map { it.stem }.toSet())
         val dnd = icons.single { it.stem == "ctrl_dnd" }.data
         assertArrayEquals(LvglIconCodec.header(160, 124, 10, 8, 160), dnd.copyOfRange(0, 12))
         val decoded = LvglIconCodec.decode(dnd)
@@ -59,25 +59,25 @@ class SystemIconsTest {
         assertTrue(bin.contentEquals(LvglIconCodec.indexedRle(pixels, 160, 124)))
         File("build/icon120-check").apply { mkdirs() }.resolve("ctrl_dnd_gradient.bin").writeBytes(bin)
     }
-    @Test fun `55槽共56文件蓝牙与心率广播缺席`() {
-        assertEquals(36, IconSpec.DESKTOP.size); assertEquals(9, IconSpec.CONTROL.size)
+    @Test fun `桌面38槽与完整原生映射可导出并附带空动画索引`() {
+        assertEquals(38, IconSpec.DESKTOP.size); assertEquals(9, IconSpec.CONTROL.size)
         assertEquals(10, IconSpec.SETTINGS.size)
-        assertEquals(55, IconSpec.SLOTS.size)
-        assertNull(IconSpec.stemOf("set_hr"))
+        assertEquals(144, IconSpec.SLOTS.size)
         assertNull(IconSpec.matchName("设置_心率广播"))
-        val selected = IconSpec.SLOTS.associate { slot -> slot.stem to IconConvert.convert(plate(), 80, 80, slot).first }
+        val selected = IconSpec.SLOTS.associate { slot -> slot.stem to if (slot.group == IconSpec.Group.NATIVE)
+            LvglIconCodec.bgra(IntArray(64 * 64) { 0xff3366aa.toInt() }, 64, 64)
+            else IconConvert.convert(plate(), 80, 80, slot).first }
         val icons = IconSpec.export(selected)
-        assertEquals(56, icons.size)
-        assertTrue(icons.none { "phone_conn" in it.stem || "phone_disconn" in it.stem })
-        assertTrue(icons.none { it.stem == "set_hr" })
+        assertEquals(145, icons.size)
+        assertTrue(AnimatedIcons.readIndex(icons.single { it.stem == "animations" }.data).isEmpty())
         assertEquals(2, icons.count { it.stem in setOf("calendar", "perpetual_calendar") })
         val dumped = File("build/icon120-check").apply { mkdirs() }
         val cipk = Cipk.build(icons); File(dumped, "pack.bin").writeBytes(cipk)
-        assertEquals(56, Cipk.parse(cipk).size)
+        assertEquals(145, Cipk.parse(cipk).size)
         val calendar = selected.getValue("perpetual_calendar")
-        assertTrue(runCatching { IconSpec.export(mapOf("ctrl_phone_conn" to calendar)) }.isFailure)
-        assertTrue(runCatching { IconSpec.export(mapOf("set_hr" to calendar)) }.isFailure)
-        assertTrue(IconSpec.export(selected - "calendar" - "perpetual_calendar" - "ctrl_disturb").none {
+        assertArrayEquals(calendar, IconSpec.export(mapOf("ctrl_phone_conn" to calendar)).first { it.stem == "ctrl_phone_conn" }.data)
+        assertTrue(runCatching { IconSpec.export(mapOf("unknown_resource" to calendar)) }.isFailure)
+        assertTrue(IconSpec.export(selected - "calendar" - "perpetual_calendar" - "ctrl_disturb" - "ctrl_dnd").none {
             it.stem in setOf("calendar", "perpetual_calendar", "ctrl_disturb", "ctrl_dnd")
         })
     }
@@ -95,26 +95,23 @@ class SystemIconsTest {
             IconSpec.stemOf("perpetual_calendar")!!).first
         val picked = mapOf("calendar" to schedule, "perpetual_calendar" to calendar)
         val both = IconSpec.export(picked)
-        assertEquals(setOf("calendar", "perpetual_calendar"), both.map { it.stem }.toSet())
+        assertEquals(setOf("calendar", "perpetual_calendar", "animations"), both.map { it.stem }.toSet())
         assertArrayEquals(schedule, both.single { it.stem == "calendar" }.data)
         assertArrayEquals(calendar, both.single { it.stem == "perpetual_calendar" }.data)
         assertFalse(schedule.contentEquals(calendar))
         val dump = File("build/icon120-check").apply { mkdirs() }
         for (stem in picked.keys) {
             val one = IconSpec.export(picked - picked.keys.single { it != stem })
-            assertEquals(listOf(stem), one.map { it.stem })
-            assertEquals(listOf("$stem.bin"), Cipk.parse(Cipk.build(one)).map { it.first })
+            assertEquals(listOf(stem, "animations"), one.map { it.stem })
+            assertEquals(listOf("$stem.bin", "animations.bin"), Cipk.parse(Cipk.build(one)).map { it.first })
             File(dump, "$stem-pack.bin").writeBytes(Cipk.build(one))
         }
         File(dump, "calendar-and-schedule-pack.bin").writeBytes(Cipk.build(both))
         assertTrue(IconSpec.export(picked - picked.keys).isEmpty())
     }
     @Test fun `系统规则与设备侧映射一致`() {
-        val repo = File(System.getProperty("chaos.repo") ?: error("必须指定 chaos.repo"))
-        val source = listOf(File(repo, "Chaos-Module/supervisor/src/res_hook.rs"), File(repo, "supervisor/src/res_hook.rs"))
-            .firstOrNull { it.isFile } ?: error("系统映射源缺失")
-        val stems = Regex("stem: b\"([^\"]+)\"").findAll(source.readText()).map { it.groupValues[1] }.toSet()
-        assertEquals(stems - setOf("ctrl_phone_conn", "ctrl_phone_disconn", "cal_background", "ctrl_dnd", "set_hr"),
-            (IconSpec.CONTROL + IconSpec.SETTINGS).map { it.stem }.toSet())
+        val stems = javaClass.getResourceAsStream("/gif/native-stems.txt")!!.bufferedReader().use { it.readLines().filter(String::isNotBlank).toSet() }
+        assertEquals(stems, NativeIconStems.ALL)
+        assertEquals(stems, (IconSpec.CONTROL + IconSpec.SETTINGS + IconSpec.NATIVE).map { it.stem }.toSet())
     }
 }

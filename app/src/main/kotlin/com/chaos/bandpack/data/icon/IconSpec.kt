@@ -5,20 +5,21 @@ import com.chaos.bandpack.data.DeviceTarget
 
 /** 图标槽位、尺寸及导出资源。 */
 object IconSpec {
-    const val CANVAS = 112
-    const val CONTENT = 100
+    const val LEGACY_CANVAS = 112
+    const val CANVAS = 96
+    const val CONTENT = 96
     const val MARGIN = (CANVAS - CONTENT) / 2
     const val OUT_BYTES = 12 + CANVAS * CANVAS * 4
     val HEADER = LvglIconCodec.header(CANVAS, CANVAS, 16, 0, CANVAS * 4)
-    enum class Group(val label: String) { DESKTOP("桌面"), CONTROL("控制中心"), SETTINGS("设置"), SYSTEM("系统应用") }
+    enum class Group(val label: String) { DESKTOP("桌面"), CONTROL("控制中心"), SETTINGS("设置"), SYSTEM("系统应用"), NATIVE("原生资源") }
     data class Slot(val stem: String, val label: String, val group: Group = Group.DESKTOP,
         val width: Int = if (group == Group.DESKTOP) CANVAS else 64,
         val height: Int = width, val fileStem: String = stem,
         val device: DeviceTarget = DeviceTarget.TEN_PRO) {
         val canvas: Int get() = maxOf(width, height)
-        val content: Int get() = if (group == Group.DESKTOP) CONTENT else minOf(width, height)
+        val content: Int get() = if (group == Group.DESKTOP) { if (device == DeviceTarget.NINE_PRO) 100 else CONTENT } else minOf(width, height)
     }
-    val ABSENT_ON_DEVICE = setOf("dealt", "innovation_research")
+    val ABSENT_ON_DEVICE = emptySet<String>()
     val DESKTOP: List<Slot> = listOf(
         Slot("activities", "活力指标"),
         Slot("aivs", "小爱同学"),
@@ -31,9 +32,11 @@ object IconSpec {
         Slot("card", "卡包"),
         Slot("chronograph", "秒表"),
         Slot("compass", "指南针"),
+        Slot("dealt", "旧版待办"),
         Slot("findphone", "找手机"),
         Slot("flashlight", "手电筒"),
         Slot("heartrate", "心率"),
+        Slot("innovation_research", "创新研究"),
         Slot("interconnect", "多端联动"),
         Slot("mijia", "米家"),
         Slot("music", "音乐"),
@@ -81,7 +84,9 @@ object IconSpec {
         Slot("set_mydevice", "我的设备", Group.SETTINGS),
         Slot("set_wrist", "佩戴方式", Group.SETTINGS),
     )
-    val SLOTS = DESKTOP + CONTROL + SETTINGS
+    val NATIVE = (NativeIconStems.ALL - (CONTROL + SETTINGS).map { it.stem }.toSet())
+        .sorted().map { Slot(it, it, Group.NATIVE) }
+    val SLOTS = DESKTOP + CONTROL + SETTINGS + NATIVE
     fun all(device: DeviceTarget = DeviceTarget.TEN_PRO): List<Slot> =
         if (device == DeviceTarget.TEN_PRO) SLOTS else NineIconSpec.SLOTS
     fun stemOf(s: String, device: DeviceTarget = DeviceTarget.TEN_PRO): Slot? = all(device).firstOrNull { it.stem == s }
@@ -112,23 +117,31 @@ object IconSpec {
         stems.filterNotNull().groupingBy { it }.eachCount().filterValues { it > 1 }.keys
 
     /** 各应用分别导出，勿扰自动补齐动画画布。 */
-    fun export(picked: Map<String, ByteArray>, device: DeviceTarget = DeviceTarget.TEN_PRO): List<Cipk.Icon> {
+    fun export(picked: Map<String, ByteArray>, device: DeviceTarget = DeviceTarget.TEN_PRO,
+               animations: Map<String, ByteArray> = emptyMap()): List<Cipk.Icon> {
+        if (picked.isEmpty()) {
+            require(animations.isEmpty()) { "动画缺少静态封面" }
+            return emptyList()
+        }
         val normalized = linkedMapOf<String, ByteArray>()
         picked.forEach { (stem, bin) ->
             val slot = requireNotNull(stemOf(stem, device)) { "未知图标槽位: $stem" }
             require(!normalized.containsKey(slot.stem)) { "图标槽位重复: ${slot.label}" }
             val decoded = LvglIconCodec.decode(bin)
-            require(decoded.width == slot.width && decoded.height == slot.height) { "${slot.label}尺寸不匹配" }
+            require(device == DeviceTarget.TEN_PRO || (decoded.width == slot.width && decoded.height == slot.height)) { "${slot.label}尺寸不匹配" }
             normalized[slot.fileStem] = bin
         }
         val out = normalized.map { Cipk.Icon(it.key, it.value) }.toMutableList()
-        normalized["ctrl_disturb"]?.takeIf { device == DeviceTarget.TEN_PRO }?.let { bin ->
+        normalized["ctrl_disturb"]?.takeIf { device == DeviceTarget.TEN_PRO && "ctrl_dnd" !in normalized }?.let { bin ->
             val image = LvglIconCodec.decode(bin)
-            val canvas = IntArray(160 * 124)
-            for (y in 0 until 64) System.arraycopy(image.pixels, y * 64, canvas, (y + 30) * 160 + 48, 64)
-            out += Cipk.Icon("ctrl_dnd", LvglIconCodec.indexedRle(canvas, 160, 124))
+            if (image.width == 64 && image.height == 64) {
+                val canvas = IntArray(160 * 124)
+                for (y in 0 until 64) System.arraycopy(image.pixels, y * 64, canvas, (y + 30) * 160 + 48, 64)
+                out += Cipk.Icon("ctrl_dnd", LvglIconCodec.indexedRle(canvas, 160, 124))
+            }
         }
-        return out.sortedBy { it.stem }
+        return if (device == DeviceTarget.TEN_PRO) AnimatedIcons.prepare(out.sortedBy { it.stem }, animations)
+            else out.sortedBy { it.stem }
     }
     fun devicePath(stem: String): String = "/data/chaos/icons/$stem.bin"
 }

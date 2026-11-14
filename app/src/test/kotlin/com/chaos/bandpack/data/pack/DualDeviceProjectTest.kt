@@ -17,9 +17,14 @@ class DualDeviceProjectTest {
     private val nine = File(System.getProperty("chaos.n67.repo") ?: error("必须指定 chaos.n67.repo"))
     private val template get() = File(nine, "n67/importer.lua.in").readText(Charsets.UTF_8)
     private fun golden(count: Int) = File(nine.parentFile, "chaos-bandpack-9pro/app/src/test/resources/n67/golden-$count.bin").readBytes()
-    private fun assets(): PackAssets = PackAssets(File(root, "Chaos-Module/supervisor/chaos_sup.ko").readBytes(),
-        File(root, "Chaos-Module/chaos_icon.bin").readBytes(), File(root, "Chaos-Module/installer/font_pack.lua").readText(),
-        File(root, "Chaos-Module/installer/icon_pack.lua").readText())
+    private fun deviceFile(relative: String): File? = listOf(File(root, relative),
+        File(root, "Chaos-Module/$relative")).firstOrNull { it.isFile }
+    private fun requiredDeviceFile(relative: String): File = requireNotNull(deviceFile(relative)) {
+        "缺少设备侧输入：$relative，请按 README 准备 chaos.repo"
+    }
+    private fun assets(): PackAssets = PackAssets(requiredDeviceFile("supervisor/chaos_sup.ko").readBytes(),
+        requiredDeviceFile("chaos_icon.bin").readBytes(), requiredDeviceFile("installer/font_pack.lua").readText(),
+        File("src/main/pack/icon_pack.lua").readText())
     private fun preview() = NineShellBuilder.previewOf(golden(1))
     private val info = PackInfo("Demo", "图标 Demo", "图标投递 Demo")
     private val output = File("build/dual-device-check").apply { mkdirs() }
@@ -27,7 +32,7 @@ class DualDeviceProjectTest {
         val x = i % 112; val y = i / 112
         if (x in 6..105 && y in 6..105) 0x803366aa.toInt() else 0
     }, 112, 112)
-    private fun validFont() = File(root, "Chaos-Module/fonts/lxgw-wenkai-band.ttf").takeIf { it.isFile }?.readBytes()
+    private fun validFont() = deviceFile("fonts/lxgw-wenkai-band.ttf")?.readBytes()
         ?: File(System.getProperty("user.home"), "Downloads/LXGWWenKai-Regular.ttf").readBytes()
 
     @Test fun independentNineShellGoldenAndBrokenLength() {
@@ -72,7 +77,7 @@ class DualDeviceProjectTest {
         val image = LvglIconCodec.decode(bytes)
         assertEquals(0x803366aa.toInt(), image.pixels[0])
         val back = PortableIcons.forTarget(mapOf("weather" to bytes), DeviceTarget.TEN_PRO)
-        assertArrayEquals(original, back.icons.single().data)
+        assertArrayEquals(LvglIconCodec.bgra(IntArray(96 * 96) { 0x803366aa.toInt() }, 96, 96), back.icons.single { it.stem == "weather" }.data)
         val slot = NineIconSpec.SLOTS.single { it.fileStem == "hr_rest" }
         val (rect, _) = IconConvert.convert(IntArray(100 * 100) { 0x803366aa.toInt() }, 100, 100, slot)
         assertEquals(64, LvglIconCodec.decode(rect).width); assertEquals(56, LvglIconCodec.decode(rect).height)
@@ -114,7 +119,7 @@ class DualDeviceProjectTest {
         assertTrue(result.icons.none { "phone_conn" in it.stem || "phone_disconn" in it.stem })
         val dnd = picked.getValue("ctrl_disturb")
         val ten = PortableIcons.forTarget(mapOf("ctrl_disturb" to dnd), DeviceTarget.TEN_PRO)
-        assertEquals(setOf("ctrl_disturb", "ctrl_dnd"), ten.icons.map { it.stem }.toSet())
+        assertEquals(setOf("ctrl_disturb", "ctrl_dnd", "animations"), ten.icons.map { it.stem }.toSet())
         assertEquals(160, LvglIconCodec.decode(ten.icons.single { it.stem == "ctrl_dnd" }.data).width)
         File(output, "icons-pack.bin").writeBytes(pack.bytes)
     }
@@ -151,7 +156,10 @@ class DualDeviceProjectTest {
         assertTrue(opened.font.preserve)
         val corrupt = rewrite(bytes) { name, data -> if (name == "images/weather.bin") data.copyOf().also { it[30] = (it[30].toInt() xor 1).toByte() } else data }
         assertTrue(runCatching { ProjectCodec.read(corrupt) }.isFailure)
-        val newer = rewrite(bytes) { name, data -> if (name == "project.json") data.toString(Charsets.UTF_8).replace("\"version\":1", "\"version\":99").toByteArray() else data }
+        val newer = rewrite(bytes) { name, data -> if (name == "project.json") {
+            val metadata = Json.parseToJsonElement(data.toString(Charsets.UTF_8)).jsonObject
+            JsonObject(metadata + ("version" to JsonPrimitive(99))).toString().toByteArray(Charsets.UTF_8)
+        } else data }
         assertTrue(runCatching { ProjectCodec.read(newer) }.isFailure)
         File(output, "both-devices.chaosproj").writeBytes(bytes)
     }

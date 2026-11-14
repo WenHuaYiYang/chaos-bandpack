@@ -73,6 +73,11 @@ import com.chaos.bandpack.ui.LocalDeviceTarget
 import com.chaos.bandpack.ui.LocalWorkspace
 import com.chaos.bandpack.ui.component.DeviceSheet
 import com.chaos.bandpack.data.icon.PortableIcons
+import com.chaos.bandpack.data.icon.AnimatedIcons
+import com.chaos.bandpack.data.icon.Dgf1
+import com.chaos.bandpack.data.icon.IconInputNames
+import com.chaos.bandpack.ui.component.AnimatedIconDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import com.chaos.bandpack.data.icon.IconSpec
@@ -126,6 +131,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     val snackbar = remember { SnackbarHostState() }
     val workspace = LocalWorkspace.current
     var choosingDevice by remember { mutableStateOf(false) }
+    var previewAnimation by remember { mutableStateOf<ByteArray?>(null) }
     val width = LocalWidthClass.current
 
     // 转发到工作区: 这一页是底部导航栏的同级标签页, 切走再回来不能丢已选的图
@@ -146,7 +152,8 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
     var group by draft::group
     val slots = IconSpec.all(device)
     val chosen = picked.keys.count { IconSpec.stemOf(it, device) != null }
-    val omitted = picked.keys.filter { IconSpec.stemOf(it, device) == null && !(it == "ctrl_dnd" && device == DeviceTarget.TEN_PRO && "ctrl_disturb" in picked) }
+    val omitted = PortableIcons.omitted(picked, device)
+    val animatedCount = picked.keys.count(AnimatedIcons::isAnimationKey)
     LaunchedEffect(device) { if (IconSpec.slots(group, device).isEmpty()) group = IconSpec.Group.DESKTOP }
 
     fun tell(text: String) {
@@ -158,15 +165,17 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
             busy = true
             val r = try {
                 withContext(Dispatchers.Default) {
-                    runCatching { IconMake.convert(ctx, uri, requireNotNull(IconSpec.stemOf(stem, device))) }
+                    runCatching { IconMake.convert(ctx, uri, requireNotNull(IconSpec.stemOf(stem, device)), picked[stem]) }
                 }
             } finally { busy = false }
             r.fold(
                 onSuccess = { res ->
-                    picked = picked + (stem to res.bytes)
+                    picked = AnimatedIcons.withoutSlot(picked, stem) + (stem to res.bytes) +
+                        (res.animation?.let { mapOf(AnimatedIcons.key(stem) to it) } ?: emptyMap())
                     haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
                     val label = IconSpec.stemOf(stem, device)?.label ?: stem
-                    tell("「$label」已处理：内容占比 %.0f%%".format(res.report.coverage * 100))
+                    tell(if (res.animation != null) "「$label」已导入 ${res.frames} 帧动画和静态封面"
+                        else "「$label」已设为静态图标，保留透明度")
                 },
                 onFailure = { e ->
                     tell(
@@ -203,28 +212,15 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
         scope.launch {
             busy = true
             val res = try { withContext(Dispatchers.IO) {
-                val next = picked.toMutableMap()
-                var ok = 0
-                var unmatched = 0
-                val bad = mutableListOf<String>()
-                val names = uris.map { it to stemForName(ctx, it, device) }
-                val duplicates = IconSpec.duplicateStems(names.map { it.second })
-                for ((u, name) in names) {
-                    val stem = name ?: run { unmatched++; continue }
-                    if (stem in duplicates) { bad += "重名: ${IconSpec.stemOf(stem, device)?.label}"; continue }
-                    runCatching { IconMake.convert(ctx, u, requireNotNull(IconSpec.stemOf(stem, device))) }
-                        .onSuccess { next[stem] = it.bytes; ok++ }
-                        .onFailure { bad += (IconSpec.stemOf(stem, device)?.label ?: stem) }
-                }
-                BatchImport(next, ok, unmatched, bad)
+                IconMake.importMany(ctx, uris, device, picked)
             } } finally { busy = false }
             picked = res.picked
             if (res.ok > 0) haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
             tell(
                 buildString {
-                    append("导入 ${res.ok} 张")
+                    append("导入 ${res.ok} 个槽位")
                     if (res.unmatched > 0) append("，${res.unmatched} 张文件名对不上")
-                    if (res.bad.isNotEmpty()) append("，${res.bad.size} 张重名或不合适：${res.bad.take(3).joinToString()}")
+                    if (res.bad.isNotEmpty()) append("，${res.bad.size} 组未导入：${res.bad.take(3).joinToString()}")
                 },
             )
         }
@@ -368,7 +364,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                             modifier = Modifier
                                 .clip(CircleShape)
                                 .background(tone.capsule)
-                                .clickable(enabled = !busy) { batchPicker.launch(arrayOf("image/*")) }
+                                .clickable(enabled = !busy) { batchPicker.launch(arrayOf("image/*", "application/octet-stream")) }
                                 .padding(horizontal = Spacing.m, vertical = Spacing.s),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -395,7 +391,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 scope.launch {
                                     val r = snackbar.showSnackbar(
-                                        message = "已清空 ${backup.size} 张",
+                                        message = "已清空 ${backup.keys.count { !AnimatedIcons.isAnimationKey(it) }} 个槽位及其动画",
                                         actionLabel = "撤销",
                                     )
                                     if (r == SnackbarResult.ActionPerformed) picked = backup
@@ -420,7 +416,8 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     // 空槽里那张图不是本应用画的: 它是手环原本的图标, 从固件资源包里解出来的。
                     // 出处写在图例下面一句话说清, 免得被当成自有素材(授权限制见开源许可页)。
                     Text(
-                        "空槽保留系统图标；批量导入重名时请加分类，例如「控制中心_勿扰」。",
+                        if (device == DeviceTarget.TEN_PRO) "桌面支持 PNG、GIF 和原生 BIN；同名 GIF 可搭配一张自定义封面。动画需升级手环端 Chaos 模块。"
+                        else "9 Pro 仅导出静态图标；工程中的 10 Pro 动画会保留。",
                         style = MaterialTheme.typography.labelSmall,
                         color = tone.muted,
                         modifier = Modifier.padding(top = Spacing.s),
@@ -441,10 +438,11 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     }
                     Text(
                         if (group == IconSpec.Group.DESKTOP) {
-                            if (device == DeviceTarget.TEN_PRO) "112 × 112 · 日程与日历分别选择，日历使用静态图"
+                            if (device == DeviceTarget.TEN_PRO) "新图片 96 × 96 · GIF 支持 1–256 帧 · 旧原生 BIN 保留原尺寸"
                             else "100 × 100 · 9 Pro 桌面素材"
                         }
-                        else "按槽位尺寸适配 · 保留透明边缘" + if (group == IconSpec.Group.CONTROL) " · 勿扰共用一张图" else "",
+                        else if (group == IconSpec.Group.NATIVE) "仅导入原生 BIN · 保留资源尺寸 · 文件名须与设备映射一致"
+                        else "静态素材 · 保留透明边缘" + if (group == IconSpec.Group.CONTROL) " · 勿扰共用一张图" else "",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -457,16 +455,19 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     selected = picked[slot.stem],
                     stock = if (picked.containsKey(slot.stem) || device == DeviceTarget.NINE_PRO) null else IconMake.stockIcon(ctx, slot.stem),
                     group = slot.group,
+                    animation = if (device == DeviceTarget.TEN_PRO) picked[AnimatedIcons.key(slot.stem)] else null,
+                    onPreview = { previewAnimation = picked[AnimatedIcons.key(slot.stem)] },
                     onClick = {
                         if (!busy) {
                             pendingStem = slot.stem
-                            picker.launch(arrayOf("image/*"))
+                            picker.launch(if (slot.group == IconSpec.Group.NATIVE) arrayOf("application/octet-stream")
+                                else arrayOf("image/*", "application/octet-stream"))
                         }
                     },
                     onClear = {
                         if (!busy) {
                             pack = null
-                            picked = picked - slot.stem
+                            picked = AnimatedIcons.withoutSlot(picked, slot.stem)
                             tell("「${slot.label}」已清空，将使用系统原图标")
                         }
                     },
@@ -479,11 +480,13 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     SectionHeader("表盘参数", chaosIcon(ChaosIcon.SectionParams))
                     ParamsBlock(
                         short, { v ->
-                            short = v.filter { c -> c.code in 0x21..0x7E }.take(12)
+                            short = v.filter { c -> if (device == DeviceTarget.TEN_PRO)
+                                c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '_' || c == '-'
+                                else c.code in 0x21..0x7E }.take(12)
                             if (!nameTouched) packName = "图标:$short"
                             if (!titleTouched) title = "图标投递 $short"
                         },
-                        packName, { nameTouched = true; packName = it.truncateBytes(ShellBuilder.NAME_MAX - 1) },
+                        packName, { nameTouched = true; packName = it.truncateBytes(if (device == DeviceTarget.TEN_PRO) IconPackBuilder.DISPLAY_BYTES else ShellBuilder.NAME_MAX - 1) },
                         title, { titleTouched = true; title = it.take(24) },
                         pkgId, { v -> pkgId = v.filter { it.isDigit() }.take(12) },
                     )
@@ -501,6 +504,9 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                     }
                     if (device == DeviceTarget.NINE_PRO) Text(Assets.NINE_HINT,
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (device == DeviceTarget.TEN_PRO && animatedCount > 0) Text(
+                        "配套新版 Chaos 才能播放动画；旧版仅使用封面。覆盖同名包前请先切回系统原图标，投递完成后重新选择该包。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val p = pack
                     if (p == null) {
                         Text(
@@ -513,6 +519,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
                             StatChip(chaosIcon(ChaosIcon.Pin), p.pkgName, "表盘 ID")
                             StatChip(chaosIcon(ChaosIcon.Grid), "$chosen", "已选槽位")
                             StatChip(chaosIcon(ChaosIcon.Image), "${p.iconCount}", "入包文件")
+                            if (device == DeviceTarget.TEN_PRO) StatChip(chaosIcon(ChaosIcon.Image), "$animatedCount", "动态图标")
                             StatChip(
                                 chaosIcon(ChaosIcon.Size),
                                 "%.2f MB".format(p.bytes.size / 1048576.0),
@@ -565,6 +572,7 @@ fun IconMakerScreen(draft: IconDraft, autoUri: android.net.Uri? = null, onAutoCo
         onSelect = { workspace?.selectDevice(it) },
         onDismiss = { choosingDevice = false },
     )
+    previewAnimation?.let { bytes -> AnimatedIconDialog(bytes) { previewAnimation = null } }
 }
 
 /**
@@ -580,6 +588,8 @@ private fun SlotCell(
     selected: ByteArray?,
     stock: ImageBitmap?,
     group: IconSpec.Group,
+    animation: ByteArray?,
+    onPreview: () -> Unit,
     onClick: () -> Unit,
     onClear: () -> Unit,
 ) {
@@ -657,6 +667,9 @@ private fun SlotCell(
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
+        if (animation != null) TextButton(onClick = onPreview, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+            Text("动态 · ${Dgf1.u16(animation, 8)} 帧", style = MaterialTheme.typography.labelSmall)
+        }
     }
 }
 
@@ -709,7 +722,7 @@ private fun ParamsBlock(
             value = short,
             onValueChange = onShort,
             label = { Text("短名") },
-            supportingText = { Text("${short.length}/12") },
+            supportingText = { Text(if (device == DeviceTarget.TEN_PRO) "字母、数字、_、- · ${short.length}/12" else "${short.length}/12") },
             singleLine = true,
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
@@ -763,13 +776,6 @@ private fun ParamsBlock(
 }
 
 /** [loadMany] 的结果: 新的一批图 + 三种去向的计数与名单 */
-private class BatchImport(
-    val picked: Map<String, ByteArray>,
-    val ok: Int,
-    val unmatched: Int,
-    /** 认出了槽位但图不合适的那几张的**中文名**, 报给用户看 */
-    val bad: List<String>,
-)
 
 /**
  * 把选中的文件名对到一个槽位上, 对不上返回 null。
@@ -785,9 +791,7 @@ private fun stemForName(ctx: android.content.Context, uri: android.net.Uri, devi
  * (查 DISPLAY_NAME) 没法在单测里跑, 而"名字怎么算对得上"恰恰是最容易写错的地方。
  */
 internal fun stemForFileName(fileName: String, device: DeviceTarget = DeviceTarget.TEN_PRO): String? {
-    val base = fileName.substringBeforeLast('.').trim()
-    if (base.isEmpty()) return null
-    return IconSpec.matchName(base, device)?.stem
+    return IconInputNames.match(fileName, device)?.first
 }
 
 /**
@@ -811,7 +815,7 @@ private fun exportBlockReason(
         short.isBlank() -> "包短名是空的"
         shortBytes > IconPackBuilder.SHORT_BYTES ->
             "包短名 $shortBytes 字节，上限 ${IconPackBuilder.SHORT_BYTES}"
-        device == DeviceTarget.TEN_PRO && short.any { it.code <= 0x20 || it.code >= 0x7F } -> "包短名只能用可打印 ASCII，不支持中文"
+        device == DeviceTarget.TEN_PRO && !IconPackBuilder.validShort(short) -> "包短名只能用 ASCII 字母、数字、下划线或连字符"
         packName.isBlank() -> "表盘名称是空的"
         title.isBlank() -> "标题文字是空的"
         pkgId.isNotBlank() && pkgId.length != 12 ->

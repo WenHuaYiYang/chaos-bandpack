@@ -65,7 +65,7 @@ object Incoming {
         return when {
             name.endsWith(".ttf") || name.endsWith(".otf") || name.endsWith(".ttc") -> Kind.FONT
             name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") ||
-                name.endsWith(".webp") || name.endsWith(".bmp") -> Kind.IMAGE
+                name.endsWith(".webp") || name.endsWith(".bmp") || name.endsWith(".gif") -> Kind.IMAGE
             name.endsWith(".bin") || name.endsWith(".chaosproj") || m == "application/octet-stream" || m == "application/zip" -> Kind.PACK
             else -> null
         }

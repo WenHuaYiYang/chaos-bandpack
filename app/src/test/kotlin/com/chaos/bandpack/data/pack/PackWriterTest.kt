@@ -13,10 +13,8 @@ import java.io.File
  * 再拆回来核对结构。它保证"打包链本身"在任何机器上都是通的。
  *
  * **需要对拍素材的那一组**(设备侧仓库 / PC 侧产物 / 图标素材): 必须具备对应素材 ——
- * 素材缺失即失败。其中最硬的一条是**与 PC 侧产物逐字节一致**:
- * 图标包的 CIPK 是纯数据、Lua 由同一份模板替换同样的值, 所以两端产出的 `.bin`
- * 必须一个字节都不差。做得到这一条, App 打出来的包与 PC 脚本打的完全等价
- * (手环侧不需要区分是谁打的)。
+ * 素材缺失即失败。旧 PC 图标包用于包名哈希和原样导入回归；
+ * 新两资源图标包与 Python 的逐字节对拍位于 AnimatedPackTest。
  *
  * 字体包做不到逐字节(PC 侧用 fontTools 重写字体, 我们是手写子集化), 那一条改成两条能钉死的:
  * 结构 + "包号由载荷哈希推出来"。
@@ -27,23 +25,10 @@ class PackWriterTest {
 
     private val repo: File = File(System.getProperty("chaos.repo") ?: "../../Chaos-Module").canonicalFile
 
-    /** 设备侧仓库的两种目录形状都认(工程根 / 已发布仓库根) */
-    private fun dev(rel: String): File? =
-        listOf(File(repo, rel), File(File(repo, "Chaos-Module"), rel)).firstOrNull { it.isFile }
-
     /** 设备侧工程根旁边那些产物(PC 打的包、图标素材目录): chaos.repo 指向工程根或其上一层都能找到 */
     private fun artifact(name: String): File? =
         listOf(File(repo, "dist/$name"), File(repo, name), File(repo.parentFile, name))
             .firstOrNull { it.exists() }
-
-    /** 真实素材(ko / 应用图标 / 两个投递 Lua); 缺任何一样就返回 null, 对拍组据此失败 */
-    private fun realAssets(): PackAssets? {
-        val ko = dev("supervisor/chaos_sup.ko") ?: return null
-        val icon = dev("chaos_icon.bin") ?: return null
-        val fl = dev("installer/font_pack.lua") ?: return null
-        val il = dev("installer/icon_pack.lua") ?: return null
-        return PackAssets(ko.readBytes(), icon.readBytes(), fl.readText(), il.readText())
-    }
 
     /** 合成模板: 占位符各出现一次, 打包器的门就是照这个口径立的 */
     private val fakeAssets = PackAssets(
@@ -104,10 +89,10 @@ class PackWriterTest {
     }
 
     @Test
-    fun `图标包四槽结构正确且 CIPK 往返一致`() {
+    fun `图标包两资源结构正确且CIPK往返一致`() {
         val icons = listOf(
-            Cipk.Icon("alarm", ByteArray(120) { 7 }),
-            Cipk.Icon("heartrate", ByteArray(90) { 9 }),
+            Cipk.Icon("alarm", com.chaos.bandpack.data.icon.LvglIconCodec.bgra(IntArray(96 * 96) { 0xff3366aa.toInt() }, 96, 96)),
+            Cipk.Icon("heartrate", com.chaos.bandpack.data.icon.LvglIconCodec.bgra(IntArray(96 * 96) { 0xffaa6633.toInt() }, 96, 96)),
         )
         val res = IconPackBuilder.build(fakeAssets, IconPackBuilder.Inputs(
             short = "Demo", packName = "图标:Demo", title = "图标投递 Demo",
@@ -115,19 +100,18 @@ class PackWriterTest {
         ), fakePreview(800))
 
         val p = ShellBuilder.parse(res.bytes)
-        assertEquals(4, p.files.size)
-        assertEquals(2, res.iconCount)
+        assertEquals(2, p.files.size)
+        assertEquals(3, res.iconCount)
         assertEquals(
             listOf(
-                "_lua/iconpack/main.lua", "_lua/iconpack/chaos_sup.ko",
-                "_lua/iconpack/chaos_icon.bin", "_lua/iconpack/pack.bin",
+                "_lua/xiaomi-band-10-pro/main.lua", "_lua/xiaomi-band-10-pro/pack.bin",
             ),
             p.files.map { it.first },
         )
-        val cipk = p.files[3].second
+        val cipk = p.files[1].second
         assertEquals("包名不是 CIPK 的哈希", ShellWriter.pkgFor(cipk), res.pkgName)
         val back = Cipk.parse(cipk)
-        assertEquals(2, back.size)
+        assertEquals(3, back.size)
         assertEquals("alarm.bin", back[0].first)
         assertArrayEquals(icons[0].data, back[0].second)
         val lua = String(p.files[0].second, Charsets.UTF_8)
@@ -172,7 +156,7 @@ class PackWriterTest {
                 is ShellWriter.PackError,
         )
 
-        // 图标包短名只能是可打印 ASCII
+        // 图标包短名只允许 ASCII 字母、数字、下划线和连字符
         assertTrue(
             runCatching {
                 IconPackBuilder.build(fakeAssets, IconPackBuilder.Inputs(
@@ -215,7 +199,7 @@ class PackWriterTest {
                 .exceptionOrNull() is ShellWriter.PackError,
         )
         // 控制字符走十进制转义
-        assertEquals("a\\7b", luaQuote("a\u0007b"))
+        assertEquals("a\\007b", luaQuote("a\u0007b"))
     }
 
     @Test
@@ -276,43 +260,15 @@ class PackWriterTest {
     }
 
     @Test
-    fun `图标包与 PC 侧产物逐字节一致`() {
-        val a = realAssets()
-        assertTrue("设备侧素材不在本机, 跳过", a != null)
+    fun `旧PC投递包中的素材仍可原样导入`() {
         val pcPack = artifact("chaos-iconpack-Delta.bin")
-        assertTrue("没有 PC 侧图标包, 跳过", pcPack != null)
-        val dir = artifact("assets/delta_lvgl")
-        assertTrue("没有图标素材目录, 跳过", dir?.isDirectory == true)
-
-        val desktop = dir!!.listFiles { f -> f.name.endsWith(".bin") }!!
-            .sortedBy { it.name }
-            .map { Cipk.Icon(it.name.removeSuffix(".bin"), it.readBytes()) }
-        assertTrue("素材少于 30 张, 目录不对", desktop.size >= 30)
-
-        val want = pcPack!!.readBytes()
-        val icons = Cipk.parse(ShellWriter.readEntry(want, 4).second).map { Cipk.Icon(it.first.removeSuffix(".bin"), it.second) }
-        desktop.forEach { icon ->
-            assertArrayEquals("PC 包桌面素材漂移: ${icon.stem}", icon.data, icons.single { it.stem == icon.stem }.data)
+        assertTrue("没有 PC 侧旧图标包，不能验证兼容性", pcPack != null)
+        val raw = pcPack!!.readBytes()
+        val oldFiles = Cipk.parse(ShellWriter.readEntry(raw, 4).second)
+        val imported = com.chaos.bandpack.data.project.PackBinImport.read(raw).icons!!.images
+        for ((name, bytes) in oldFiles) {
+            if (name != "animations.bin") assertArrayEquals(name, bytes, imported[name.removeSuffix(".bin")])
         }
-        val luaTemplate = String(ShellWriter.readEntry(want, 1).second, Charsets.UTF_8)
-            .replace("local PACK_NAME = \"Delta\"", "local PACK_NAME = \"__PACK_NAME__\"")
-            .replace("local PACK_TITLE = \"图标投递 Delta\"", "local PACK_TITLE = \"__PACK_TITLE__\"")
-        // 预览块用 PC 侧那份(像素渲染各端各自实现, 不比字节; 但同一预览输入 -> 同一产物字节)
-        val preview = ShellBuilder.previewOf(want)
-        val fixtureAssets = PackAssets(
-            ko = ShellWriter.readEntry(want, 2).second,
-            iconBin = ShellWriter.readEntry(want, 3).second,
-            fontLua = a!!.fontLua,
-            iconLua = luaTemplate,
-        )
-        val res = IconPackBuilder.build(fixtureAssets, IconPackBuilder.Inputs(
-            short = "Delta", packName = "图标:Delta", title = "图标投递 Delta",
-            pkgName = null, icons = icons,
-        ), preview)
-
-        assertEquals("包名与 PC 侧不一致", String(want, ShellWriter.PKG_OFF, ShellWriter.PKG_LEN, Charsets.US_ASCII), res.pkgName)
-        assertEquals("体积与 PC 侧不一致", want.size, res.bytes.size)
-        assertArrayEquals("与 PC 侧产物不是逐字节一致", want, res.bytes)
     }
 
     @Test

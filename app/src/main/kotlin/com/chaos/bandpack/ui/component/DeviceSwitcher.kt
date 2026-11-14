@@ -54,10 +54,7 @@ import com.chaos.bandpack.ui.theme.chaosIcon
 /** 已选图标在这台设备上还剩多少能导出, 剩下的留在工程里等切回去 */
 private fun deviceStats(target: DeviceTarget, picked: Set<String>): Pair<Int, Int> {
     val count = picked.count { IconSpec.stemOf(it, target) != null }
-    val retained = picked.count { key ->
-        IconSpec.stemOf(key, target) == null &&
-            !(key == "ctrl_dnd" && "ctrl_disturb" in picked && target == DeviceTarget.TEN_PRO)
-    }
+    val retained = com.chaos.bandpack.data.icon.PortableIcons.omittedKeys(picked, target).size
     return count to retained
 }
 

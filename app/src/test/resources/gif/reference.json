@@ -1,0 +1,59 @@
+{
+  "disposal": {
+    "delays": [
+      20,
+      70,
+      110,
+      40
+    ],
+    "plays": 3
+  },
+  "local-palettes": {
+    "delays": [
+      30,
+      90,
+      120
+    ],
+    "plays": 0
+  },
+  "interlaced": {
+    "delays": [
+      30
+    ],
+    "plays": 1
+  },
+  "loop-once": {
+    "delays": [
+      10,
+      20,
+      30
+    ],
+    "plays": 1
+  },
+  "partial-trans": {
+    "delays": [
+      20
+    ],
+    "plays": 1
+  },
+  "partial-opaque": {
+    "delays": [
+      20
+    ],
+    "plays": 1
+  },
+  "partial-trans-index2": {
+    "delays": [
+      20
+    ],
+    "plays": 1
+  },
+  "disposal-zero": {
+    "delays": [
+      20,
+      20,
+      20
+    ],
+    "plays": 0
+  }
+}
