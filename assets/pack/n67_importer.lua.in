@@ -1,0 +1,164 @@
+-- Chaos N67素材导入器。只写空槽位，最后原子提交索引；不执行原生代码。
+local lvgl=require('lvgl')
+local M=__N67_MANIFEST__
+local BASE='/data/app/watchface/market/'..M.pkg..'/_lua/_Lua/'
+local DIR='/data/chaos/'..(M.kind=='font' and 'font' or 'icons')
+local work,finished,opened,input_open=nil,false,nil,nil
+local created={}
+local function exists(path)
+  local f=io.open(path,'rb');if not f then return false end;f:close();return true
+end
+local function log(s)
+  local f=io.open('/data/chaos-import.log','ab');if f then f:write(s..'\n');f:close() end
+end
+local root=lvgl.Object(nil,{w=336,h=480,bg_color=0xEDF3F8,bg_opa=lvgl.OPA(100),border_width=0,pad_all=0})
+root:clear_flag(lvgl.FLAG.SCROLLABLE|lvgl.FLAG.CLICKABLE|lvgl.FLAG.PRESS_LOCK)
+root:add_flag(lvgl.FLAG.EVENT_BUBBLE|lvgl.FLAG.GESTURE_BUBBLE)
+local body=lvgl.Font('MiSans-Regular',22)
+local function label(text,y,h,size,color)
+  local o=lvgl.Label(root,{text=text,width=304,height=h,text_font=lvgl.Font('MiSans-Regular',size),
+    text_color=color,text_align=1,align={type=lvgl.ALIGN.TOP_LEFT,x_ofs=16,y_ofs=y}})
+  o:clear_flag(lvgl.FLAG.CLICKABLE|lvgl.FLAG.PRESS_LOCK)
+  o:add_flag(lvgl.FLAG.EVENT_BUBBLE|lvgl.FLAG.GESTURE_BUBBLE);return o
+end
+label(M.title,80,82,30,0x142B42)
+local status=label('小米手环 9 Pro · 3.1.187\n导入后到 Chaos 选择启用',172,96,22,0x5C7185)
+local button=lvgl.Object(root,{w=304,h=76,bg_color=0x2376D8,bg_opa=lvgl.OPA(100),radius=18,
+  border_width=0,pad_all=0,align={type=lvgl.ALIGN.TOP_LEFT,x_ofs=16,y_ofs=296}})
+button:clear_flag(lvgl.FLAG.SCROLLABLE|lvgl.FLAG.PRESS_LOCK)
+button:add_flag(lvgl.FLAG.CLICKABLE|lvgl.FLAG.EVENT_BUBBLE|lvgl.FLAG.GESTURE_BUBBLE)
+local caption=lvgl.Label(button,{text='导入素材',width=292,height=32,text_font=body,text_color=0xFFFFFF,text_align=1,
+  align={type=lvgl.ALIGN.CENTER,x_ofs=0,y_ofs=0}})
+caption:clear_flag(lvgl.FLAG.CLICKABLE|lvgl.FLAG.PRESS_LOCK)
+caption:add_flag(lvgl.FLAG.EVENT_BUBBLE|lvgl.FLAG.GESTURE_BUBBLE)
+local function yield_step() coroutine.yield() end
+local function mkdir(path)
+  local current=''
+  for part in path:gmatch('/[^/]+') do
+    current=current..part
+    if current~='/data' then
+      local probe=current..'/.chaos-import-probe'
+      local f=io.open(probe,'ab')
+      if not f then
+        local ok,why,code=os.execute('mkdir '..current)
+        f=io.open(probe,'ab')
+        assert(f,'无法建立素材目录 '..current..' '..tostring(ok)..'/'..tostring(why)..'/'..tostring(code))
+      end
+      assert(f:close());os.remove(probe);yield_step()
+    end
+  end
+end
+local function import()
+  local v=assert(io.open('/system/version/version.ini','rb'),'无法读取系统版本')
+  local raw=v:read('*a');v:close()
+  assert(raw and raw:match('version%s*=%s*([%d.]+)')=='3.1.187','仅适配系统 3.1.187')
+  assert(M.kind=='font' or M.kind=='icons','素材类型错误')
+  assert(#M.label>0 and #M.label<=12 and not M.label:find('[%s%c]'),'素材短名不合法')
+  assert(#M.entries>0 and #M.entries<=126,'素材数量错误')
+  mkdir(DIR)
+  local idx=string.rep(' ',128)
+  local f=io.open(DIR..'/index.txt','rb')
+  if f then idx=f:read('*a');f:close() end
+  assert(idx and #idx==128,'索引异常，未写入任何素材')
+  local used,record={},nil
+  for i=0,7 do
+    local r=idx:sub(i*16+1,i*16+16)
+    if r==string.rep(' ',16) then record=record or i
+    else
+      local slot=tonumber(r:sub(1,2))
+      assert(slot and slot>=1 and slot<=8 and r:sub(3,3)==' ' and r:sub(16,16)=='\n' and not used[slot], '索引记录异常')
+      used[slot]=true
+      assert(r:sub(4,15):gsub(' +$','')~=M.label,'同名素材已存在，请换短名')
+    end
+  end
+  assert(record~=nil,'八个槽位已满')
+  local slot=nil
+  for s=1,8 do
+    if not used[s] then
+      local occupied=false
+      if M.kind=='font' then occupied=exists(DIR..'/st'..s..'.ttf') or exists(DIR..'/st'..s..'.pending')
+      else
+        local folder=DIR..'/'..string.format('%02d',s)
+        occupied=exists(folder..'/.importing')
+        for _,stem in ipairs(M.stems) do if exists(folder..'/'..stem..'.bin') then occupied=true end end
+      end
+      if not occupied then slot=s;break end
+    end
+  end
+  assert(slot,'没有安全空槽位，未覆盖现有素材')
+  local target=M.kind=='font' and (DIR..'/st'..slot..'.pending') or (DIR..'/'..string.format('%02d',slot))
+  if M.kind=='icons' then
+    mkdir(target)
+    local marker=target..'/.importing';local h=assert(io.open(marker,'wb'))
+    created[#created+1]=marker;assert(h:write(M.pkg));assert(h:close())
+  end
+  local output=nil
+  if M.kind=='font' then output=assert(io.open(target,'wb'));opened=output;created[#created+1]=target end
+  for i,e in ipairs(M.entries) do
+    status:set{text=string.format('导入 %d/%d\n槽位 %d',i,#M.entries,slot)}
+    assert(e.src:match('^[a-z0-9_-]+%.dat$'),'源文件名异常')
+    local input=assert(io.open(BASE..e.src,'rb'),'找不到素材：'..e.src);input_open=input
+    local destination=target
+    if M.kind=='icons' then
+      local valid=false;for _,stem in ipairs(M.stems) do if stem==e.stem then valid=true end end
+      assert(valid,'未知图标')
+      destination=target..'/'..e.stem..'.bin'
+      assert(not exists(destination),'拒绝覆盖图标')
+      output=assert(io.open(destination,'wb'));opened=output;created[#created+1]=destination
+    end
+    local bytes,sum=0,0
+    while true do
+      local chunk=input:read(4096);if not chunk then break end
+      if bytes==0 then
+        if M.kind=='icons' then
+          local w,h=e.width or 100,e.height or 100
+          assert(w>=12 and w<=160 and h>=12 and h<=160 and e.bytes==4+w*h*4,'图标尺寸不匹配')
+          assert(#chunk>=4 and string.unpack('<I4',chunk)==(5|(w<<10)|(h<<21)),'图标格式不匹配')
+        elseif i==1 then assert(chunk:sub(1,4)=='\0\1\0\0','字体不是 TrueType') end
+      end
+      bytes=bytes+#chunk;assert(bytes<=e.bytes,'素材长度超出清单')
+      for j=1,#chunk do sum=sum+chunk:byte(j) end
+      assert(output:write(chunk),'写入失败');yield_step()
+    end
+    input:close();input_open=nil
+    assert(bytes==e.bytes and sum==e.sum,'素材校验失败')
+    if M.kind=='icons' then assert(output:close());output=nil;opened=nil end
+  end
+  if M.kind=='font' then
+    assert(output:close());opened=nil
+    local final=DIR..'/st'..slot..'.ttf';assert(not exists(final),'字体槽位已被占用')
+    assert(os.rename(target,final),'字体提交失败');created[#created+1]=final
+  end
+  local row=string.format('%02d ',slot)..M.label..string.rep(' ',12-#M.label)..'\n'
+  local updated=idx:sub(1,record*16)..row..idx:sub(record*16+17)
+  local tmp=DIR..'/index-'..M.pkg..'.pending';assert(not exists(tmp),'索引临时文件已存在')
+  f=assert(io.open(tmp,'wb'));opened=f;created[#created+1]=tmp
+  assert(f:write(updated));assert(f:close());opened=nil
+  -- No yield between stale-index check and commit. Preserve other packs.
+  local now=string.rep(' ',128);f=io.open(DIR..'/index.txt','rb');if f then now=f:read('*a');f:close() end
+  assert(now==idx,'索引已变化，请重试')
+  assert(os.rename(tmp,DIR..'/index.txt'),'索引提交失败')
+  created={};finished=true
+  if M.kind=='icons' then os.remove(target..'/.importing') end
+  caption:set{text='导入完成'};status:set{text='Chaos → 系统美化\n选择 '..M.label..' 启用'}
+  log('OK '..M.kind..' '..M.label..' slot='..slot)
+end
+button:onevent(lvgl.EVENT.SHORT_CLICKED,function()
+  if not work and not finished then work=coroutine.create(import);caption:set{text='正在导入…'} end
+end)
+local scheduler=lvgl.Timer{period=25,repeat_count=-1,cb=function(t)
+  if work then
+    local ok,err=coroutine.resume(work)
+    if not ok then
+      if opened then pcall(function() opened:close() end);opened=nil end
+      if input_open then pcall(function() input_open:close() end);input_open=nil end
+      for _,path in ipairs(created) do os.remove(path) end;created={}
+      local message=tostring(err):match(':%d+:%s*(.*)') or tostring(err)
+      status:set{text=message,text_color=0xB63B4C};caption:set{text='重试导入'}
+      log('FAIL '..tostring(err));work=nil
+    elseif coroutine.status(work)=='dead' then work=nil end
+  end
+  t:resume()
+end}
+local owners={root,body,scheduler,button,caption,status}
+log('READY '..M.kind..' '..M.label..' '..M.pkg)

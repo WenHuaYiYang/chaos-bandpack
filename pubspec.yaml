@@ -1,0 +1,47 @@
+name: chaos_bandpack
+description: Chaos 同步器(Flutter 重写) —— 字体包/图标包/动态图标制作 + 通过 ChaosConnect 与手环真实通信。
+publish_to: 'none'
+version: 2.0.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 经典蓝牙 SPP/RFCOMM —— ChaosConnect Android 载波
+  file_picker: ^8.1.2
+  image: ^4.2.3
+  archive: ^3.6.1
+  crypto: ^3.0.5
+  shared_preferences: ^2.3.2
+  # 界面图标统一用 MingCute(https://www.mingcute.com/)的 Line/Fill 双字形,
+  # 自带 2 套 ttf, 不依赖联网取图; 图标的码点常量在包内生成, 不手抄。
+  flutter_mingcute: ^3.1.0
+  liquid_glass_widgets: ^1.19.0
+
+# 新版 shared_preferences_android 会带 jni / jni_flutter, 它们要在本机跑 CMake
+# 交叉编译原生库; 本机没有可用的 NDK(只有空壳), CMake 通道必然失败。
+# 2.4.27 是不依赖 jni 的最后一版, 功能对制作台足够(键值读写)。
+dependency_overrides:
+  shared_preferences_android: 2.4.27
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  test: ^1.25.7
+  fake_async: ^1.3.3
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/pack/
+    - assets/fonts/
+    - assets/brand/
+  fonts:
+    # 界面字族用设备侧的 MiSans(与手环上看到的字形一致), 同时给预览块
+    # 光栅化用 —— 预览里的中文必须和包里的字体观感对得上。
+    - family: MiSans
+      fonts:
+        - asset: assets/fonts/MiSans-Regular.ttf
